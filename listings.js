@@ -91,10 +91,10 @@ rows.forEach(row => {
 
   if (!data[cinema]) data[cinema] = [];
 
-  // ✓ find existing film
+  // find existing film
   let film = data[cinema].find(f => f.title === title);
 
-  // ✓ if new, create film object
+  // if this is the first row for this title, create the film object
   if (!film) {
     film = {
       title,
@@ -111,10 +111,11 @@ rows.forEach(row => {
     data[cinema].push(film);
   }
 
-  // ✓ add time
+  // add time
   if (time) film.times.push(time);
 
 });
+
 
 
     data[cinema].push(film);
