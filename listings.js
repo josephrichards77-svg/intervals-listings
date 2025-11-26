@@ -65,31 +65,41 @@ document.addEventListener("DOMContentLoaded", function () {
         // Convert rows into the SAME structure your display code expects
         const data = {};
 
-        rows.forEach(row => {
-          // Expected columns:
-          // [0]=date, [1]=cinema, [2]=title, [3]=details, [4]=format, [5]=time
-          const [rowDate, cinema, title, details, format, time] = row;
+     rows.forEach(row => {
+  // Row structure:
+  // 0 = date, 1 = cinema, 2 = title, 3..n-2 = details bits, n-1 = time
+  if (!row || row.length < 4) return;
 
-          if (rowDate !== formatted) return; // only show selected day
+  const rowDate = row[0];
+  const cinema  = row[1];
+  const title   = row[2];
 
-          if (!data[cinema]) data[cinema] = [];
+  if (rowDate !== formatted) return; // only this date
 
-          // find existing film entry
-          let film = data[cinema].find(f => f.title === title);
+  // Everything from index 3 up to the last cell (exclusive) = details
+  // Last cell = time
+  const time = row[row.length - 1];
+  const detailParts = row.slice(3, row.length - 1).filter(Boolean); // drop empty cells
+  const details = detailParts.join(" • ");
 
-          if (!film) {
-            film = {
-              title,
-              details: `${details}${format ? " • " + format : ""}`,
-              times: []
-            };
-            data[cinema].push(film);
-          }
+  if (!data[cinema]) data[cinema] = [];
 
-          if (time) {
-            film.times.push(time);
-          }
-        });
+  let film = data[cinema].find(f => f.title === title);
+
+  if (!film) {
+    film = {
+      title,
+      details,
+      times: []
+    };
+    data[cinema].push(film);
+  }
+
+  if (time) {
+    film.times.push(time);
+  }
+});
+
 
         if (Object.keys(data).length === 0) {
           container.innerHTML = `<p style="text-align:center; padding:20px;">No listings for this date.</p>`;
