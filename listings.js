@@ -52,16 +52,15 @@ document.addEventListener("DOMContentLoaded", function () {
     return ["th", "st", "nd", "rd"][Math.min(n % 10, 4)];
   }
 
-  function fmtDate(d) {
-    return d
-      .toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric"
-      })
-      .replace(/(\d+)(,)/, (_, day, comma) => day + getOrdinal(day) + comma);
-  }
+ function fmtDate(d) {
+  const day = d.getDate();
+  const month = d.toLocaleString("en-US", { month: "long" });
+  const weekday = d.toLocaleString("en-US", { weekday: "long" });
+  const year = d.getFullYear();
+
+  return `${weekday}, ${month} ${day}${getOrdinal(day)}, ${year}`;
+}
+
 
   function iso(d) {
     return d.toISOString().split("T")[0];
