@@ -6,7 +6,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ORDINAL SUFFIXES (1st, 2nd, 3rd, 4th…)
   // -------------------------------------------------------
   function getOrdinal(n) {
-    if (n > 3 && n < 21) return "th"; // 11th–13th
+    if (n > 3 && n < 21) return "th";
     switch (n % 10) {
       case 1: return "st";
       case 2: return "nd";
@@ -17,29 +17,22 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // -------------------------------------------------------
   // FULL HUMAN-READABLE DATE
-  // → Wednesday, November 26th, 2025
   // -------------------------------------------------------
   function formatFullDate(date) {
     const day = date.getDate();
     const suffix = getOrdinal(day);
-
     const weekday = date.toLocaleDateString("en-GB", { weekday: "long" });
     const month = date.toLocaleDateString("en-GB", { month: "long" });
     const year = date.getFullYear();
-
     return `${weekday}, ${month} ${day}${suffix}, ${year}`;
   }
 
-  // -------------------------------------------------------
-  // UPDATE DATE HEADER IN UI
-  // -------------------------------------------------------
   function updateCalendar() {
-    const el = document.getElementById("calendar-date");
-    el.textContent = formatFullDate(currentDate);
+    document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
   }
 
   // -------------------------------------------------------
-  // LOAD LISTINGS FOR GIVEN DATE (FROM GOOGLE SHEETS API)
+  // LOAD LISTINGS FROM GOOGLE SHEETS
   // -------------------------------------------------------
   function loadListingsFor(date) {
 
@@ -60,73 +53,60 @@ document.addEventListener("DOMContentLoaded", function () {
           return;
         }
 
-        const rows = sheet.values.slice(1); // skip header
-
-        // Convert rows into the SAME structure your display code expects
+        const rows = sheet.values.slice(1);
         const data = {};
 
-rows.forEach(row => {
+        rows.forEach(row => {
 
-  const rowDate  = row[0];
-  const cinema   = row[1];
-  const title    = row[2];
-  const director = row[3];
-  const runtime  = row[4];
-  const format   = row[5];
-  const year     = row[6];
-  let timeRaw    = row[7];
+          if (!row || row.length < 3) return;
 
-  if (rowDate !== formatted) return;
+          const rowDate  = row[0];
+          const cinema   = row[1];
+          const title    = row[2];
+          const director = row[3];
+          const runtime  = row[4];
+          const format   = row[5];
+          const year     = row[6];
+          let   timeRaw  = row[7];
 
-  // --- normalise time ---
-  let time = "";
-  if (typeof timeRaw === "number") {
-    const totalMinutes = Math.round(timeRaw * 24 * 60);
-    const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-    const mm = String(totalMinutes % 60).padStart(2, "0");
-    time = `${hh}:${mm}`;
-  } else {
-    time = timeRaw || "";
-  }
+          if (rowDate !== formatted) return;
 
-  if (!data[cinema]) data[cinema] = [];
+          // --- normalise time ---
+          let time = "";
+          if (typeof timeRaw === "number") {
+            const totalMinutes = Math.round(timeRaw * 24 * 60);
+            const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+            const mm = String(totalMinutes % 60).padStart(2, "0");
+            time = `${hh}:${mm}`;
+          } else {
+            time = timeRaw || "";
+          }
 
-  // find existing film
-  let film = data[cinema].find(f => f.title === title);
+          if (!cinema) return;
+          if (!data[cinema]) data[cinema] = [];
 
-  // if this is the first row for this title, create the film object
-  if (!film) {
-    film = {
-      title,
-      details: [
-        director || "",
-        year || "",
-        runtime ? (runtime.includes("min") ? runtime : runtime + " min") : "",
-        format || ""
-      ]
-        .filter(Boolean)
-        .join(", "),
-      times: []
-    };
-    data[cinema].push(film);
-  }
+          // find existing film
+          let film = data[cinema].find(f => f.title === title);
 
-  // add time
-  if (time) film.times.push(time);
+          if (!film) {
+            film = {
+              title,
+              details: [
+                director || "",
+                year || "",
+                runtime ? (runtime.includes("min") ? runtime : runtime + " min") : "",
+                format || ""
+              ]
+                .filter(Boolean)
+                .join(", "),
+              times: []
+            };
+            data[cinema].push(film);
+          }
 
-});
+          if (time) film.times.push(time);
 
-
-
-    data[cinema].push(film);
-  }
-
-  // Add time
-  if (time) film.times.push(time);
-
-});
-
-
+        });
 
         if (Object.keys(data).length === 0) {
           container.innerHTML = `<p style="text-align:center; padding:20px;">No listings for this date.</p>`;
@@ -134,11 +114,10 @@ rows.forEach(row => {
         }
 
         // -------------------------------------------------------
-        // RENDER RESULTS USING YOUR EXISTING HTML OUTPUT LOGIC
+        // RENDER
         // -------------------------------------------------------
         Object.entries(data).forEach(([cinemaName, screenings]) => {
 
-          // Sort films by first time (safe)
           screenings.sort((a, b) => {
             const ta = a?.times?.[0]?.replace(":", "") || 0;
             const tb = b?.times?.[0]?.replace(":", "") || 0;
@@ -178,7 +157,7 @@ rows.forEach(row => {
   }
 
   // -------------------------------------------------------
-  // NAVIGATION BUTTONS
+  // NAVIGATION
   // -------------------------------------------------------
   document.getElementById("prev-btn").onclick = function () {
     currentDate.setDate(currentDate.getDate() - 1);
@@ -192,25 +171,17 @@ rows.forEach(row => {
     loadListingsFor(currentDate);
   };
 
-  // -------------------------------------------------------
-  // CLICK ON DATE → SHOW PICKER
-  // -------------------------------------------------------
   document.getElementById("calendar-date").onclick = function () {
     document.getElementById("date-picker").showPicker();
   };
 
-  // -------------------------------------------------------
-  // DATE PICKER → UPDATE DATE
-  // -------------------------------------------------------
   document.getElementById("date-picker").onchange = function (e) {
     currentDate = new Date(e.target.value);
     updateCalendar();
     loadListingsFor(currentDate);
   };
 
-  // -------------------------------------------------------
-  // INITIAL PAGE LOAD
-  // -------------------------------------------------------
+  // FIRST LOAD
   updateCalendar();
   loadListingsFor(currentDate);
 
