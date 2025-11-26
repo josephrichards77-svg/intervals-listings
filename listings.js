@@ -67,22 +67,20 @@ document.addEventListener("DOMContentLoaded", function () {
 
 rows.forEach(row => {
 
-  // Column map — adjust only if your sheet changes
-  const rowDate  = row[0];   // YYYY-MM-DD
+  const rowDate  = row[0];
   const cinema   = row[1];
   const title    = row[2];
   const director = row[3];
-  const runtime  = row[4];   // e.g. "99" or "99 min"
-  const format   = row[5];   // e.g. "35MM"
-  const year     = row[6];   // e.g. "2000"
-  let timeRaw    = row[7];   // Either "17:40" or 0.73611111
+  const runtime  = row[4];
+  const format   = row[5];
+  const year     = row[6];
+  let timeRaw    = row[7];
 
   if (rowDate !== formatted) return;
 
-  // --- Normalise time ---
+  // --- normalise time ---
   let time = "";
   if (typeof timeRaw === "number") {
-    // Google Sheets time in fraction-of-day → convert to HH:MM
     const totalMinutes = Math.round(timeRaw * 24 * 60);
     const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
     const mm = String(totalMinutes % 60).padStart(2, "0");
@@ -91,28 +89,33 @@ rows.forEach(row => {
     time = timeRaw || "";
   }
 
-  // Prepare cinema bucket
   if (!data[cinema]) data[cinema] = [];
 
-  // Find existing film entry if already added
+  // ✓ find existing film
   let film = data[cinema].find(f => f.title === title);
 
- film = {
-  title,
+  // ✓ if new, create film object
+  if (!film) {
+    film = {
+      title,
+      details: [
+        director || "",
+        year || "",
+        runtime ? (runtime.includes("min") ? runtime : runtime + " min") : "",
+        format || ""
+      ]
+        .filter(Boolean)
+        .join(", "),
+      times: []
+    };
+    data[cinema].push(film);
+  }
 
-  details: [
-    director || "",
-    year || "",
-    runtime
-      ? (runtime.includes("min") ? runtime : runtime + " min")
-      : "",
-    format || ""
-  ]
-    .filter(Boolean)
-    .join(", "),   // director, year, runtime, format
+  // ✓ add time
+  if (time) film.times.push(time);
 
-  times: []
-};
+});
+
 
     data[cinema].push(film);
   }
