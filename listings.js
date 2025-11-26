@@ -1,177 +1,128 @@
-document.addEventListener("DOMContentLoaded", function () {
+/* ============================
+   INTERVALS LISTINGS.JS (v3)
+   Clean + Sorted + Ordinals
+   ============================ */
 
-  const API_URL = "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+// --- CONFIG ---
+const API_URL = "https://intervalslondon.com/wp-json/intervals/v1/listings";
 
-  const dateSpan = document.getElementById("calendar-date");
-  const datePicker = document.getElementById("date-picker");
-  const prevBtn = document.getElementById("prev-btn");
-  const nextBtn = document.getElementById("next-btn");
-  const listingsContainer = document.getElementById("cinema-listings");
+// --- DATE HANDLING ---
+let currentDate = new Date();
 
-  let currentDate = new Date();
-  let allRows = [];
-  let headers = [];
-
-  function cleanField(v) {
-    if (!v) return "";
-    return String(v)
-      .replace(/^"+|"+$/g, "")
-      .replace(/""/g, '"')
-      .trim();
-  }
-
-  function normalizeTime(t) {
-    if (!t) return "";
-    t = cleanField(t);
-
-    if (/^\d{1,2}:\d{2}$/.test(t)) return t;
-
-    const num = parseFloat(t);
-    if (!isNaN(num) && num > 0 && num < 2) {
-      const total = Math.round(num * 24 * 60);
-      const hh = String(Math.floor(total / 60)).padStart(2, "0");
-      const mm = String(total % 60).padStart(2, "0");
-      return `${hh}:${mm}`;
-    }
-
-    return t;
-  }
-
-  function normalizeRuntime(r) {
-    if (!r) return "";
-    r = cleanField(r);
-    const num = parseFloat(r);
-
-    if (!isNaN(num) && num > 0 && num < 2) return "";
-
-    return r;
-  }
-
-  function getOrdinal(n) {
-    if (n > 3 && n < 21) return "th";
-    return ["th", "st", "nd", "rd"][Math.min(n % 10, 4)];
-  }
-
- function fmtDate(d) {
-  const day = d.getDate();
-  const month = d.toLocaleString("en-US", { month: "long" });
-  const weekday = d.toLocaleString("en-US", { weekday: "long" });
-  const year = d.getFullYear();
-
-  return `${weekday}, ${month} ${day}${getOrdinal(day)}, ${year}`;
+// Add ordinal suffix: 1st, 2nd, 3rd, 4th...
+function getOrdinal(n) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
 }
 
+// Format date as: Tuesday, 26th November 2025
+function formatFullDate(date) {
+  const weekday = date.toLocaleString("en-GB", { weekday: "long" });
+  const day = date.getDate();
+  const month = date.toLocaleString("en-GB", { month: "long" });
+  const year = date.getFullYear();
+  return `${weekday}, ${day}${getOrdinal(day)} ${month} ${year}`;
+}
 
-  function iso(d) {
-    return d.toISOString().split("T")[0];
-  }
+// Update calendar header
+function updateCalendar() {
+  document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
+}
 
-  function updateDate() {
-    dateSpan.textContent = fmtDate(currentDate);
-    renderForDay(currentDate);
-  }
+// --- PARSE TIME UTILS ---
+function parseTimeString(t) {
+  // converts "14:30" into a Date object for sorting
+  const [h, m] = t.split(":").map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d;
+}
 
-  dateSpan.onclick = function () {
-    datePicker.value = iso(currentDate);
-    datePicker.showPicker();
-  };
+// Extract earliest screening time from an array like ["14:00", "18:30"]
+function getEarliestTime(times) {
+  if (!times || times.length === 0) return null;
+  const parsed = times.map(parseTimeString);
+  parsed.sort((a, b) => a - b);
+  return parsed[0]; // earliest
+}
 
-  datePicker.onchange = function (e) {
-    currentDate = new Date(e.target.value);
-    updateDate();
-  };
+// --- FETCH LISTINGS ---
+async function loadListingsFor(date) {
+  const isoDate = date.toISOString().split("T")[0];
 
-  prevBtn.onclick = function () {
-    currentDate.setDate(currentDate.getDate() - 1);
-    updateDate();
-  };
+  const res = await fetch(`${API_URL}?date=${isoDate}`);
+  const data = await res.json();
 
-  nextBtn.onclick = function () {
-    currentDate.setDate(currentDate.getDate() + 1);
-    updateDate();
-  };
+  renderListings(data);
+}
 
-  async function load() {
-    try {
-      const res = await fetch(API_URL);
-      const data = await res.json();
-      headers = data.values[0];
-      allRows = data.values.slice(1);
-      updateDate();
-    } catch (e) {
-      console.error("Fetch error:", e);
-      listingsContainer.textContent = "Failed to load cinema listings.";
-    }
-  }
+// --- RENDER ---
+function renderListings(cinemaData) {
+  const container = document.getElementById("cinema-listings");
+  container.innerHTML = "";
 
-  function renderForDay(date) {
-    listingsContainer.innerHTML = "";
-    const day = iso(date);
-
-    const todays = allRows.filter(function (r) {
-      const obj = {};
-      headers.forEach((h, i) => obj[h] = cleanField(r[i] || ""));
-      return (
-        obj["DATE"] === day &&
-        obj["VENUE"] !== "Live" &&
-        obj["VENUE"] !== "Exhibitions"
-      );
+  Object.entries(cinemaData).forEach(([cinemaName, screenings]) => {
+    // ---- SORT SCREENINGS BY EARLIEST TIME ----
+    screenings.sort((a, b) => {
+      const aTime = getEarliestTime(a.times);
+      const bTime = getEarliestTime(b.times);
+      if (!aTime) return 1;
+      if (!bTime) return -1;
+      return aTime - bTime;
     });
 
-    if (todays.length === 0) {
-      listingsContainer.textContent = "No screenings on this date.";
-      return;
-    }
+    // ---- BUILD CINEMA SECTION ----
+    let html = `
+      <div class="cinema">
+        <h2>${cinemaName}</h2>
+        <div class="screenings">
+    `;
 
-    const venues = {};
+    screenings.forEach(screening => {
+      const { title, details, times } = screening;
 
-    todays.forEach(function (r) {
-      const obj = {};
-      headers.forEach((h, i) => obj[h] = cleanField(r[i] || ""));
+      // Convert array of times into comma-separated string
+      const timeString = times.join(", ");
 
-      const venue = obj["Corrected VENUE"] || obj["VENUE"];
-      const title = obj["Corrected TITLE"] || obj["TITLE"];
-      const director = obj["Corrected DIRECTOR"] || obj["DIRECTOR"];
-      const year = obj["Corrected Year"] || obj["YEAR"];
-      const runtime = normalizeRuntime(obj["Corrected RUNTIME"] || obj["RUNTIME"]);
-      const format = obj["Corrected FORMAT"] || obj["FORMAT"];
-      const time = normalizeTime(obj["Corrected TIME"] || obj["TIME"]);
-      const link = obj["Corrected LINK"] || obj["LINK"] || "#";
-
-      if (!venues[venue]) venues[venue] = [];
-      venues[venue].push({ title, director, year, runtime, format, time, link });
+      html += `
+        <div class="screening">
+          <a href="#">${title}</a>
+          <div class="details">${details}</div>
+          <div class="time">${timeString}</div>
+        </div>
+      `;
     });
 
-    Object.keys(venues).forEach(function (venueName) {
-      const block = document.createElement("div");
-      block.className = "cinema";
-      block.innerHTML = "<h2>" + venueName + "</h2>";
+    html += `</div></div>`;
+    container.innerHTML += html;
+  });
+}
 
-      const grid = document.createElement("div");
-      grid.className = "screenings";
-
-      venues[venueName].forEach(function (item) {
-        const details = [
-          item.director, item.year, item.runtime, item.format
-        ].filter(Boolean).join(", ");
-
-        const card = document.createElement("div");
-        card.className = "screening";
-
-        card.innerHTML =
-          `<div>
-            <div class="title"><a href="${item.link}" target="_blank">${item.title}</a></div>
-            <div class="details">${details}</div>
-          </div>
-          <div class="time">${item.time}</div>`;
-
-        grid.appendChild(card);
-      });
-
-      block.appendChild(grid);
-      listingsContainer.appendChild(block);
-    });
-  }
-
-  load();
+// --- NAVIGATION ---
+document.getElementById("prev-btn").addEventListener("click", () => {
+  currentDate.setDate(currentDate.getDate() - 1);
+  updateCalendar();
+  loadListingsFor(currentDate);
 });
+
+document.getElementById("next-btn").addEventListener("click", () => {
+  currentDate.setDate(currentDate.getDate() + 1);
+  updateCalendar();
+  loadListingsFor(currentDate);
+});
+
+// --- DATE PICKER ---
+document.getElementById("calendar-date").addEventListener("click", () => {
+  document.getElementById("date-picker").showPicker();
+});
+
+document.getElementById("date-picker").addEventListener("change", (e) => {
+  currentDate = new Date(e.target.value);
+  updateCalendar();
+  loadListingsFor(currentDate);
+});
+
+// --- ON LOAD ---
+updateCalendar();
+loadListingsFor(currentDate);
