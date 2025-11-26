@@ -97,17 +97,23 @@ rows.forEach(row => {
   // Find existing film entry if already added
   let film = data[cinema].find(f => f.title === title);
 
-  if (!film) {
-    film = {
-      title,
-      details: [
-        director,
-        year,
-        runtime ? (runtime.includes("min") ? runtime : runtime + " min") : "",
-        format
-      ].filter(Boolean).join(" • "),
-      times: []
-    };
+ film = {
+  title,
+
+  details: [
+    director || "",
+    year || "",
+    runtime
+      ? (runtime.includes("min") ? runtime : runtime + " min")
+      : "",
+    format || ""
+  ]
+    .filter(Boolean)
+    .join(", "),   // director, year, runtime, format
+
+  times: []
+};
+
     data[cinema].push(film);
   }
 
