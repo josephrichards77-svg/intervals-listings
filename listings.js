@@ -3,7 +3,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let currentDate = new Date();
 
   // -------------------------------------------------------
-  // ORDINAL SUFFIXES (1st, 2nd, 3rd, 4th…)
+  // ORDINALS (1st, 2nd, 3rd…)
   // -------------------------------------------------------
   function getOrdinal(n) {
     if (n > 3 && n < 21) return "th";
@@ -16,7 +16,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // -------------------------------------------------------
-  // FULL HUMAN-READABLE DATE
+  // FULL DATE — Wednesday, November 26th, 2025
   // -------------------------------------------------------
   function formatFullDate(date) {
     const day = date.getDate();
@@ -49,7 +49,7 @@ document.addEventListener("DOMContentLoaded", function () {
       .then(sheet => {
 
         if (!sheet.values || sheet.values.length < 2) {
-          container.innerHTML = `<p style="text-align:center; padding:20px;">No listings for this date.</p>`;
+          container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
           return;
         }
 
@@ -70,8 +70,9 @@ document.addEventListener("DOMContentLoaded", function () {
           let   timeRaw  = row[7];
 
           if (rowDate !== formatted) return;
+          if (!cinema) return;
 
-          // --- normalise time ---
+          // --- normalise time (numbers from Sheets → HH:MM) ---
           let time = "";
           if (typeof timeRaw === "number") {
             const totalMinutes = Math.round(timeRaw * 24 * 60);
@@ -82,12 +83,12 @@ document.addEventListener("DOMContentLoaded", function () {
             time = timeRaw || "";
           }
 
-          if (!cinema) return;
           if (!data[cinema]) data[cinema] = [];
 
-          // find existing film
+          // find any existing film entry under this cinema
           let film = data[cinema].find(f => f.title === title);
 
+          // if none, create new entry
           if (!film) {
             film = {
               title,
@@ -96,32 +97,34 @@ document.addEventListener("DOMContentLoaded", function () {
                 year || "",
                 runtime ? (runtime.includes("min") ? runtime : runtime + " min") : "",
                 format || ""
-              ]
-                .filter(Boolean)
-                .join(", "),
+              ].filter(Boolean).join(", "),
               times: []
             };
             data[cinema].push(film);
           }
 
-          if (time) film.times.push(time);
+          // add time (ONLY if non-empty)
+          if (time.trim() !== "") {
+            film.times.push(time);
+          }
 
         });
 
         if (Object.keys(data).length === 0) {
-          container.innerHTML = `<p style="text-align:center; padding:20px;">No listings for this date.</p>`;
+          container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
           return;
         }
 
         // -------------------------------------------------------
-        // RENDER
+        // RENDER: nice 3-column cards
         // -------------------------------------------------------
         Object.entries(data).forEach(([cinemaName, screenings]) => {
 
+          // sort by first screening time
           screenings.sort((a, b) => {
-            const ta = a?.times?.[0]?.replace(":", "") || 0;
-            const tb = b?.times?.[0]?.replace(":", "") || 0;
-            return ta - tb;
+            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
+            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
+            return parseInt(ta) - parseInt(tb);
           });
 
           let html = `
@@ -140,10 +143,7 @@ document.addEventListener("DOMContentLoaded", function () {
             `;
           });
 
-          html += `
-              </div>
-            </div>
-          `;
+          html += `</div></div>`;
 
           container.innerHTML += html;
         });
@@ -151,8 +151,7 @@ document.addEventListener("DOMContentLoaded", function () {
       })
       .catch(err => {
         console.error("Listings fetch error:", err);
-        container.innerHTML =
-          `<p style="text-align:center; padding:20px;">Unable to load listings.</p>`;
+        container.innerHTML = `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
       });
   }
 
@@ -181,7 +180,9 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
   };
 
-  // FIRST LOAD
+  // -------------------------------------------------------
+  // INITIAL PAGE LOAD
+  // -------------------------------------------------------
   updateCalendar();
   loadListingsFor(currentDate);
 
