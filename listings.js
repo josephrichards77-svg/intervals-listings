@@ -17,16 +17,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // ------------------------------
   // FORMATTED CALENDAR DATE
-  // Example: Wednesday, November 26th, 2025
+  // Produces: Wednesday, November 26th, 2025
   // ------------------------------
   function formatFullDate(date) {
     const day = date.getDate();
     const suffix = getOrdinal(day);
 
-    return `${date.toLocaleDateString("en-GB", {
-      weekday: "long",
-      month: "long"
-    })} ${day}${suffix}, ${date.getFullYear()}`;
+    const weekday = date.toLocaleDateString("en-GB", { weekday: "long" });
+    const month = date.toLocaleDateString("en-GB", { month: "long" });
+    const year = date.getFullYear();
+
+    return `${weekday}, ${month} ${day}${suffix}, ${year}`;
   }
 
   // ------------------------------
@@ -58,7 +59,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         Object.entries(data).forEach(([cinemaName, screenings]) => {
 
-          // sort by time if needed
+          // sort times
           screenings.sort((a, b) => {
             const ta = a.times[0]?.replace(":", "") || "0";
             const tb = b.times[0]?.replace(":", "") || "0";
