@@ -65,52 +65,57 @@ document.addEventListener("DOMContentLoaded", function () {
         // Convert rows into the SAME structure your display code expects
         const data = {};
 
-     rows.forEach(row => {
-  // Row structure:
-  // 0 = date, 1 = cinema, 2 = title, 3..n-2 = details bits, n-1 = time
-  if (!row || row.length < 4) return;
+rows.forEach(row => {
 
-  const rowDate = row[0];
-  const cinema  = row[1];
-  const title   = row[2];
+  // Column map — adjust only if your sheet changes
+  const rowDate  = row[0];   // YYYY-MM-DD
+  const cinema   = row[1];
+  const title    = row[2];
+  const director = row[3];
+  const runtime  = row[4];   // e.g. "99" or "99 min"
+  const format   = row[5];   // e.g. "35MM"
+  const year     = row[6];   // e.g. "2000"
+  let timeRaw    = row[7];   // Either "17:40" or 0.73611111
 
-  if (rowDate !== formatted) return; // only this date
+  if (rowDate !== formatted) return;
 
-  // Everything from index 3 up to the last cell (exclusive) = details
-  // Last cell = time
-  const time = row[row.length - 1];
-// Extract clean columns
-const director = row[3] || "";
-const runtime  = row[4] || "";
-const format   = row[5] || "";
-const year     = row[6] || "";
+  // --- Normalise time ---
+  let time = "";
+  if (typeof timeRaw === "number") {
+    // Google Sheets time in fraction-of-day → convert to HH:MM
+    const totalMinutes = Math.round(timeRaw * 24 * 60);
+    const hh = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+    const mm = String(totalMinutes % 60).padStart(2, "0");
+    time = `${hh}:${mm}`;
+  } else {
+    time = timeRaw || "";
+  }
 
-// Assemble clean details line
-const details = [
-  director,
-  runtime ? runtime + " min" : "",
-  year,
-  format
-].filter(Boolean).join(" • ");
-
-
+  // Prepare cinema bucket
   if (!data[cinema]) data[cinema] = [];
 
+  // Find existing film entry if already added
   let film = data[cinema].find(f => f.title === title);
 
   if (!film) {
     film = {
       title,
-      details,
+      details: [
+        director,
+        year,
+        runtime ? (runtime.includes("min") ? runtime : runtime + " min") : "",
+        format
+      ].filter(Boolean).join(" • "),
       times: []
     };
     data[cinema].push(film);
   }
 
-  if (time) {
-    film.times.push(time);
-  }
+  // Add time
+  if (time) film.times.push(time);
+
 });
+
 
 
         if (Object.keys(data).length === 0) {
