@@ -4,9 +4,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
   let currentDate = new Date();
 
+  // ---- ORDINAL FIXED ----
   function getOrdinal(n) {
-    if (n > 3 && n < 21) return "th";
-    return ["th", "st", "nd", "rd"][Math.min(n % 10, 4)];
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return (v > 10 && v < 20) ? "th" : (s[n % 10] || "th");
   }
 
   function formatFullDate(date) {
@@ -57,9 +59,11 @@ document.addEventListener("DOMContentLoaded", function () {
         return ta - tb;
       });
 
-      let html = `<div class="cinema">
-                    <h2>${cinemaName}</h2>
-                    <div class="screenings">`;
+      let html = `
+        <div class="cinema">
+          <h2>${cinemaName}</h2>
+          <div class="screenings">
+      `;
 
       screenings.forEach(s => {
         html += `
@@ -67,7 +71,8 @@ document.addEventListener("DOMContentLoaded", function () {
             <a href="#">${s.title}</a>
             <div class="details">${s.details}</div>
             <div class="time">${s.times.join(", ")}</div>
-          </div>`;
+          </div>
+        `;
       });
 
       html += `</div></div>`;
@@ -75,6 +80,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  // ---- NAVIGATION ----
   document.getElementById("prev-btn").onclick = function () {
     currentDate.setDate(currentDate.getDate() - 1);
     updateCalendar();
@@ -87,16 +93,19 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
   };
 
+  // Calendar click → date picker
   document.getElementById("calendar-date").onclick = function () {
     document.getElementById("date-picker").showPicker();
   };
 
+  // Date picker change
   document.getElementById("date-picker").onchange = function (e) {
     currentDate = new Date(e.target.value);
     updateCalendar();
     loadListingsFor(currentDate);
   };
 
+  // ---- INITIALISE ----
   updateCalendar();
   loadListingsFor(currentDate);
 
