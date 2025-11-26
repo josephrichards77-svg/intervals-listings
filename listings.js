@@ -79,8 +79,20 @@ document.addEventListener("DOMContentLoaded", function () {
   // Everything from index 3 up to the last cell (exclusive) = details
   // Last cell = time
   const time = row[row.length - 1];
-  const detailParts = row.slice(3, row.length - 1).filter(Boolean); // drop empty cells
-  const details = detailParts.join(" • ");
+// Extract clean columns
+const director = row[3] || "";
+const runtime  = row[4] || "";
+const format   = row[5] || "";
+const year     = row[6] || "";
+
+// Assemble clean details line
+const details = [
+  director,
+  runtime ? runtime + " min" : "",
+  year,
+  format
+].filter(Boolean).join(" • ");
+
 
   if (!data[cinema]) data[cinema] = [];
 
