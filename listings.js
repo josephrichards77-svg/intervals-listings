@@ -1,86 +1,104 @@
 document.addEventListener("DOMContentLoaded", function () {
 
-  const API_URL = "https://intervalslondon.com/wp-json/intervals/v1/listings";
-
   let currentDate = new Date();
 
-  // ---- ORDINAL FIXED ----
+  // ------------------------------
+  // ORDINAL SUFFIXES (st, nd, rd, th)
+  // ------------------------------
   function getOrdinal(n) {
-    const s = ["th", "st", "nd", "rd"];
-    const v = n % 100;
-    return (v > 10 && v < 20) ? "th" : (s[n % 10] || "th");
+    if (n > 3 && n < 21) return "th"; // handles 11–13th
+    switch (n % 10) {
+      case 1: return "st";
+      case 2: return "nd";
+      case 3: return "rd";
+      default: return "th";
+    }
   }
 
+  // ------------------------------
+  // FORMATTED CALENDAR DATE
+  // Example: Wednesday, November 26th, 2025
+  // ------------------------------
   function formatFullDate(date) {
-    const weekday = date.toLocaleString("en-GB", { weekday: "long" });
     const day = date.getDate();
-    const month = date.toLocaleString("en-GB", { month: "long" });
-    const year = date.getFullYear();
-    return `${weekday}, ${day}${getOrdinal(day)} ${month} ${year}`;
+    const suffix = getOrdinal(day);
+
+    return `${date.toLocaleDateString("en-GB", {
+      weekday: "long",
+      month: "long"
+    })} ${day}${suffix}, ${date.getFullYear()}`;
   }
 
+  // ------------------------------
+  // UPDATE CALENDAR HEADER
+  // ------------------------------
   function updateCalendar() {
-    document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
+    const calendarDate = document.getElementById("calendar-date");
+    calendarDate.textContent = formatFullDate(currentDate);
   }
 
-  function parseTimeString(t) {
-    if (!t) return null;
-    const [h, m] = t.split(":").map(Number);
-    const d = new Date();
-    d.setHours(h, m, 0, 0);
-    return d;
-  }
+  // ------------------------------
+  // LOAD LISTINGS FOR A DATE
+  // ------------------------------
+  function loadListingsFor(date) {
 
-  function getEarliestTime(times) {
-    if (!times || times.length === 0) return null;
-    const parsed = times.map(parseTimeString);
-    parsed.sort((a, b) => a - b);
-    return parsed[0];
-  }
-
-  async function loadListingsFor(date) {
-    const iso = date.toISOString().split("T")[0];
-    const res = await fetch(`${API_URL}?date=${iso}`);
-    const data = await res.json();
-    renderListings(data);
-  }
-
-  function renderListings(cinemaData) {
     const container = document.getElementById("cinema-listings");
-    container.innerHTML = "";
+    container.innerHTML = ""; // clear previous day
 
-    Object.entries(cinemaData).forEach(([cinemaName, screenings]) => {
+    const formatted = date.toISOString().split("T")[0];
 
-      screenings.sort((a, b) => {
-        const ta = getEarliestTime(a.times);
-        const tb = getEarliestTime(b.times);
-        if (!ta) return 1;
-        if (!tb) return -1;
-        return ta - tb;
+    fetch(`https://intervalslondon.com/wp-json/intervals/v1/screenings?date=${formatted}`)
+      .then(res => res.json())
+      .then(data => {
+
+        if (!data || Object.keys(data).length === 0) {
+          container.innerHTML = `<p style="text-align:center; padding:20px;">No listings for this date.</p>`;
+          return;
+        }
+
+        Object.entries(data).forEach(([cinemaName, screenings]) => {
+
+          // sort by time if needed
+          screenings.sort((a, b) => {
+            const ta = a.times[0]?.replace(":", "") || "0";
+            const tb = b.times[0]?.replace(":", "") || "0";
+            return ta - tb;
+          });
+
+          let html = `
+            <div class="cinema">
+              <h2>${cinemaName}</h2>
+              <div class="screenings">
+          `;
+
+          screenings.forEach(s => {
+            html += `
+              <div class="screening">
+                <a href="#">${s.title}</a>
+                <div class="details">${s.details}</div>
+                <div class="time">${s.times.join(", ")}</div>
+              </div>
+            `;
+          });
+
+          html += `
+              </div>
+            </div>
+          `;
+
+          container.innerHTML += html;
+        });
+
+      })
+      .catch(err => {
+        console.error("Listings fetch error", err);
+        container.innerHTML = `<p style="text-align:center; padding:20px;">Unable to load listings.</p>`;
       });
-
-      let html = `
-        <div class="cinema">
-          <h2>${cinemaName}</h2>
-          <div class="screenings">
-      `;
-
-      screenings.forEach(s => {
-        html += `
-          <div class="screening">
-            <a href="#">${s.title}</a>
-            <div class="details">${s.details}</div>
-            <div class="time">${s.times.join(", ")}</div>
-          </div>
-        `;
-      });
-
-      html += `</div></div>`;
-      container.innerHTML += html;
-    });
   }
 
-  // ---- NAVIGATION ----
+  // ------------------------------
+  // NAVIGATION BUTTONS
+  // ------------------------------
   document.getElementById("prev-btn").onclick = function () {
     currentDate.setDate(currentDate.getDate() - 1);
     updateCalendar();
@@ -93,19 +111,25 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
   };
 
-  // Calendar click → date picker
+  // ------------------------------
+  // CALENDAR CLICK → SHOW PICKER
+  // ------------------------------
   document.getElementById("calendar-date").onclick = function () {
     document.getElementById("date-picker").showPicker();
   };
 
-  // Date picker change
+  // ------------------------------
+  // DATE PICKER → UPDATE DATE
+  // ------------------------------
   document.getElementById("date-picker").onchange = function (e) {
     currentDate = new Date(e.target.value);
     updateCalendar();
     loadListingsFor(currentDate);
   };
 
-  // ---- INITIALISE ----
+  // ------------------------------
+  // INITIALISE PAGE
+  // ------------------------------
   updateCalendar();
   loadListingsFor(currentDate);
 
