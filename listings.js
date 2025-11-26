@@ -1,4 +1,4 @@
-<script>
+
 document.addEventListener("DOMContentLoaded", function () {
 
   const API_URL = "https://intervalslondon.com/wp-json/intervals/v1/listings";
@@ -106,4 +106,4 @@ document.addEventListener("DOMContentLoaded", function () {
   loadListingsFor(currentDate);
 
 });
-</script>
+
