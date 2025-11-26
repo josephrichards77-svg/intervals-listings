@@ -1,4 +1,3 @@
-
 document.addEventListener("DOMContentLoaded", function () {
 
   const API_URL = "https://intervalslondon.com/wp-json/intervals/v1/listings";
@@ -22,7 +21,6 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
   }
 
-  // ------- TIME SORTING -------
   function parseTimeString(t) {
     if (!t) return null;
     const [h, m] = t.split(":").map(Number);
@@ -50,8 +48,7 @@ document.addEventListener("DOMContentLoaded", function () {
     container.innerHTML = "";
 
     Object.entries(cinemaData).forEach(([cinemaName, screenings]) => {
-      
-      // sort by earliest time
+
       screenings.sort((a, b) => {
         const ta = getEarliestTime(a.times);
         const tb = getEarliestTime(b.times);
@@ -78,7 +75,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  // ------- NAVIGATION --------
   document.getElementById("prev-btn").onclick = function () {
     currentDate.setDate(currentDate.getDate() - 1);
     updateCalendar();
@@ -101,9 +97,7 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
   };
 
-  // ------- INIT -------
   updateCalendar();
   loadListingsFor(currentDate);
 
 });
-
