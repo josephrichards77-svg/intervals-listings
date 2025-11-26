@@ -60,14 +60,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
           if (!row || row.length < 3) return;
 
-          const rowDate  = row[0];
-          const cinema   = row[1];
-          const title    = row[2];
-          const director = row[3];
-          const runtime  = row[4];
-          const format   = row[5];
-          const year     = row[6];
-          let   timeRaw  = row[7];
+     const rowDate  = row[0];
+const cinema   = row[1];
+const title    = row[2];
+const director = row[3];
+const runtime  = row[4];
+const format   = row[5];
+let   timeRaw  = row[6];  // TIME column
+const year     = row[7];  // YEAR column
+
 
           if (rowDate !== formatted) return;
           if (!cinema) return;
