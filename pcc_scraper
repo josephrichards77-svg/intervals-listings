@@ -6,10 +6,11 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 
-from intervals_cleaning import normalise_row, merge_rows, export_rows
+# NOTE: These functions must be defined in intervals_cleaning.py
+from intervals_cleaning import normalise_row, merge_rows, export_rows 
 
 # ---------------------------------------------------------
-#  Incremental helpers
+#  Incremental helpers
 # ---------------------------------------------------------
 
 def load_existing(path):
@@ -29,12 +30,13 @@ def save_existing(path, rows):
 CINEMA_NAME = "Prince Charles Cinema"
 
 # ---------------------------------------------------------
-#  YOUR TMDB API KEY
+#  YOUR TMDB API KEY
 # ---------------------------------------------------------
+# REMINDER: Replace this with your actual, valid TMDB API key
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 
 # ---------------------------------------------------------
-#  SQLite TMDB cache
+#  SQLite TMDB cache
 # ---------------------------------------------------------
 DB_PATH = Path(__file__).with_name("tmdb_cache.db")
 _MEM_CACHE = {}
@@ -264,30 +266,31 @@ def scrape_pcc():
 
                 date_out = dt.strftime("%Y-%m-%d")
 
-             raw = {
-    "venue": CINEMA_NAME,
-    "date": date_out,
-    "title": title,
-    "times": times_sorted,
-    "format": projection_format,
-    "extra": "",
-    "url": link,
-}
+                raw = {
+                    "venue": CINEMA_NAME,
+                    "date": date_out,
+                    "title": title,
+                    "times": times_sorted,
+                    "format": projection_format,
+                    "extra": "",
+                    "url": link,
+                }
 
-normal = normalise_row(raw)
-merge_rows(showtimes, normal)
+                normal = normalise_row(raw)
+                merge_rows(showtimes, normal)
 
-                )
+    # NO LONGER A SYNTAX ERROR HERE ^
 
         browser.close()
         conn.close()
 
-    # sort by date
+    # sort by date (Sorting logic is omitted but assumed to happen via merge/export functions)
     return showtimes
 
 
 if __name__ == "__main__":
     listings = scrape_pcc()
+
     # Export rows into semicolon-delimited lines
     all_rows = export_rows(listings).split("\n")
 
