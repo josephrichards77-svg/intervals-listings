@@ -30,6 +30,29 @@ document.addEventListener("DOMContentLoaded", function () {
   function updateCalendar() {
     document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
   }
+  
+  // -------------------------------------------------------
+  // GUARANTEED FIX: Manually apply class to cards in the final row
+  // -------------------------------------------------------
+  function applyLastRowFix() {
+    // Select all container elements with the class 'screenings'
+    document.querySelectorAll('.screenings').forEach(screeningsContainer => {
+      
+      // 1. Remove the class from all children first to reset the state
+      Array.from(screeningsContainer.children).forEach(card => {
+        card.classList.remove('last-row-card');
+      });
+
+      // 2. Apply the class to the last 3 children (The number of columns on desktop)
+      const children = Array.from(screeningsContainer.children);
+      // Use slice(-3) to target the last three elements regardless of total count
+      const lastThree = children.slice(-3);
+      
+      lastThree.forEach(card => {
+        card.classList.add('last-row-card');
+      });
+    });
+  }
 
   // -------------------------------------------------------
   // LOAD LISTINGS FROM GOOGLE SHEETS
@@ -148,6 +171,11 @@ const year     = row[7];  // YEAR column
 
           container.innerHTML += html;
         });
+
+        // -------------------------------------------------------
+        // 🔥 FIX: Apply the CSS removal class to the final row cards
+        // -------------------------------------------------------
+        applyLastRowFix();
 
       })
       .catch(err => {
