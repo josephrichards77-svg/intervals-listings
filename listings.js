@@ -117,16 +117,46 @@ const year     = row[7];  // YEAR column
         }
 
         // -------------------------------------------------------
-        // RENDER: nice 3-column cards
-        // -------------------------------------------------------
-        Object.entries(data).forEach(([cinemaName, screenings]) => {
+        // RENDER: nice 3-column cards
+        // -------------------------------------------------------
+        let fullHtml = ""; // Use a single string to build all content
 
-          // sort by first screening time
-          screenings.sort((a, b) => {
-            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
-            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
-            return parseInt(ta) - parseInt(tb);
-          });
+        Object.entries(data).forEach(([cinemaName, screenings]) => {
+
+          // sort by first screening time
+          screenings.sort((a, b) => {
+            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
+            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
+            return parseInt(ta) - parseInt(tb);
+          });
+
+          fullHtml += `
+            <div class="cinema">
+              <h2>${cinemaName}</h2>
+              <div class="screenings">
+          `;
+
+          screenings.forEach((s, index) => {
+            // NEW LOGIC: Check if this is the last screening in the list
+            const isLastScreening = (index === screenings.length - 1) ? 'last-screening' : '';
+
+            fullHtml += `
+              <div class="screening ${isLastScreening}">
+                <a href="#">${s.title}</a>
+                <div class="details">${s.details}</div>
+                <div class="time">${s.times.join(", ")}</div>
+              </div>
+            `;
+          });
+
+          fullHtml += `</div></div>`;
+        });
+
+        // Insert all generated HTML at once
+        container.innerHTML = fullHtml; 
+      })
+      .catch(err => {
+/* ... rest of the code is unchanged ... */
 
           let html = `
             <div class="cinema">
