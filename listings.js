@@ -31,28 +31,36 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
   }
   
-  // -------------------------------------------------------
-  // GUARANTEED FIX: Manually apply class to cards in the final row
-  // -------------------------------------------------------
-  function applyLastRowFix() {
-    // Select all container elements with the class 'screenings'
-    document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-      
-      // 1. Remove the class from all children first to reset the state
-      Array.from(screeningsContainer.children).forEach(card => {
-        card.classList.remove('last-row-card');
-      });
+ // -------------------------------------------------------
+// GUARANTEED FIX: Manually apply class to cards in the final row (RESPONSIVE)
+// -------------------------------------------------------
+function applyLastRowFix() {
+  // Select all container elements with the class 'screenings'
+  document.querySelectorAll('.screenings').forEach(screeningsContainer => {
 
-      // 2. Apply the class to the last 3 children (The number of columns on desktop)
-      const children = Array.from(screeningsContainer.children);
-      // Use slice(-3) to target the last three elements regardless of total count
-      const lastThree = children.slice(-3);
-      
-      lastThree.forEach(card => {
-        card.classList.add('last-row-card');
-      });
+    // 1. Determine columns based on current window width (must match your CSS media queries!)
+    let columns = 3; 
+    if (window.innerWidth <= 1024 && window.innerWidth > 768) {
+      columns = 2; // Matches tablet CSS flex setting
+    } else if (window.innerWidth <= 768) {
+      columns = 1; // Matches mobile CSS flex setting
+    }
+    
+    // 2. Clear old classes (important when this runs multiple times on resize/data change)
+    Array.from(screeningsContainer.children).forEach(card => {
+      card.classList.remove('last-row-card');
     });
-  }
+
+    // 3. Apply the class to the last N cards, where N is the calculated column count
+    const children = Array.from(screeningsContainer.children);
+    // Use slice(-columns) to target the number of cards matching the current layout
+    const lastN = children.slice(-columns);
+    
+    lastN.forEach(card => {
+      card.classList.add('last-row-card');
+    });
+  });
+}
 
   // -------------------------------------------------------
   // LOAD LISTINGS FROM GOOGLE SHEETS
