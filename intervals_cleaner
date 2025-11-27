@@ -1,0 +1,165 @@
+"""
+intervals_cleaning.py
+
+Shared normalisation, cleaning, merging, and export helpers
+for all Intervals scrapers.
+
+Each scraper should:
+    1. build raw row dicts
+    2. normalise them
+    3. merge them with merge_rows()
+    4. export with export_rows()
+
+All scrapers stay independent.
+"""
+
+import re
+import html
+
+
+# ============================================================
+# CLEANER
+# ============================================================
+
+def clean(text):
+    """Clean text fields: strip whitespace, quotes, HTML and spaces."""
+    if text is None:
+        return ""
+
+    # Always convert to string
+    s = str(text)
+
+    # Unescape HTML entities (&amp;, &rsquo; etc.)
+    s = html.unescape(s)
+
+    # Trim whitespace
+    s = s.strip()
+
+    # Strip leading/trailing quotes of various kinds
+    s = re.sub(r'^[\"\'“”‘’\s]+', '', s)
+    s = re.sub(r'[\"\'“”‘’\s]+$', '', s)
+
+    # Collapse multiple internal spaces
+    s = re.sub(r'\s{2,}', ' ', s)
+
+    return s
+
+
+# ============================================================
+# NORMALISER
+# ============================================================
+
+def normalise_row(row):
+    """
+    Ensure a row has the correct shape:
+
+    {
+      'venue': str,
+      'date': 'YYYY-MM-DD',
+      'title': str,
+      'times': ['18:00', '20:45'],
+      'format': str,
+      'extra': str,
+      'url': str,
+    }
+    """
+
+    normal = {
+        "venue": "",
+        "date": "",
+        "title": "",
+        "times": [],
+        "format": "",
+        "extra": "",
+        "url": "",
+    }
+
+    # Fill known keys if present
+    for key in normal:
+        if key in row:
+            if key == "times":
+                # ensure list
+                if isinstance(row["times"], list):
+                    normal["times"] = [clean(t) for t in row["times"] if t]
+                else:
+                    # single string → list
+                    t = clean(row["times"])
+                    normal["times"] = [t] if t else []
+            else:
+                normal[key] = clean(row[key])
+
+    return normal
+
+
+# ============================================================
+# MERGING (ONE ROW PER FILM PER DAY)
+# ============================================================
+
+def merge_rows(existing_rows, new_row):
+    """
+    Merge new_row into existing_rows *in place*.
+
+    Rules:
+    - Keyed by (venue, date, title)
+    - Times are merged and deduped
+    - Format / extra / url kept if empty in existing
+    """
+
+    key = (new_row["venue"], new_row["date"], new_row["title"])
+
+    # Look for existing row with same signature
+    for row in existing_rows:
+        if (row["venue"], row["date"], row["title"]) == key:
+            # Merge times
+            for t in new_row["times"]:
+                if t not in row["times"]:
+                    row["times"].append(t)
+
+            # Keep format if missing
+            if not row["format"] and new_row["format"]:
+                row["format"] = new_row["format"]
+
+            # Keep extra if missing
+            if not row["extra"] and new_row["extra"]:
+                row["extra"] = new_row["extra"]
+
+            # Keep url if missing
+            if not row["url"] and new_row["url"]:
+                row["url"] = new_row["url"]
+
+            return  # merged → done
+
+    # No existing row → add new
+    existing_rows.append(new_row)
+
+
+# ============================================================
+# EXPORTER (TO .TXT FOR CMS)
+# ============================================================
+
+def export_rows(rows):
+    """
+    Convert list of row dicts into a semicolon-delimited text block.
+    Sorted by date, then title.
+    """
+
+    # Sort consistently
+    rows_sorted = sorted(rows, key=lambda r: (r["date"], r["title"]))
+
+    lines = []
+    for r in rows_sorted:
+        times_str = ", ".join(sorted(r["times"]))
+
+        line = ";".join([
+            r["date"],
+            r["venue"],
+            r["title"],
+            times_str,
+            r["format"],
+            r["url"],
+            r["extra"],
+        ])
+
+        lines.append(line)
+
+    return "\n".join(lines)
