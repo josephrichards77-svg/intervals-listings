@@ -1,306 +1,129 @@
-from playwright.sync_api import sync_playwright
-import dateparser
-from collections import defaultdict
-import requests
-import sqlite3
-from pathlib import Path
-from datetime import datetime
-import os
-
-from intervals_cleaning import normalise_row, merge_rows, export_rows
-
-# ---------------------------------------------------------
-# Incremental helpers
-# ---------------------------------------------------------
-
-def load_existing(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    except FileNotFoundError:
-        return set()
-
-
-def save_existing(path, rows):
-    with open(path, "w", encoding="utf-8") as f:
-        for r in sorted(rows):
-            f.write(r + "\n")
-
-
-CINEMA_NAME = "Prince Charles Cinema"
-
-# ---------------------------------------------------------
-# TMDB API
-# ---------------------------------------------------------
-TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
-
-DB_PATH = Path(__file__).with_name("tmdb_cache.db")
-_MEM_CACHE = {}
-
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tmdb_cache (
-            title TEXT NOT NULL,
-            year_hint TEXT,
-            tmdb_id INTEGER,
-            runtime_min INTEGER,
-            director TEXT,
-            final_year TEXT,
-            last_updated TEXT,
-            PRIMARY KEY (title, year_hint)
-        )
-        """
-    )
-    conn.commit()
-    return conn
-
-
-def tmdb_get_metadata(conn, title: str, year_hint: str | None):
-    key = (title, year_hint or "")
-
-    if key in _MEM_CACHE:
-        return _MEM_CACHE[key]
-
-    cur = conn.execute(
-        "SELECT runtime_min, director, final_year FROM tmdb_cache WHERE title = ? AND year_hint IS ?",
-        (title, year_hint),
-    )
-    row = cur.fetchone()
-    if row:
-        runtime_min, director, final_year = row
-        meta = {
-            "runtime_min": runtime_min,
-            "director": director,
-            "year": final_year or year_hint,
-        }
-        _MEM_CACHE[key] = meta
-        return meta
-
-    if not TMDB_API_KEY:
-        meta = {"runtime_min": None, "director": None, "year": year_hint}
-        _MEM_CACHE[key] = meta
-        return meta
-
-    try:
-        params = {"api_key": TMDB_API_KEY, "query": title}
-        if year_hint:
-            params["year"] = year_hint
-
-        r = requests.get(
-            "https://api.themoviedb.org/3/search/movie",
-            params=params,
-            timeout=10
-        )
-        r.raise_for_status()
-
-        results = r.json().get("results") or []
-        if not results:
-            meta = {"runtime_min": None, "director": None, "year": year_hint}
-            _MEM_CACHE[key] = meta
-            return meta
-
-        movie = results[0]
-        if year_hint:
-            for m in results:
-                rd = (m.get("release_date") or "")[:4]
-                if rd == str(year_hint):
-                    movie = m
-                    break
-
-        movie_id = movie.get("id")
-        if not movie_id:
-            meta = {"runtime_min": None, "director": None, "year": year_hint}
-            _MEM_CACHE[key] = meta
-            return meta
-
-        r2 = requests.get(
-            f"https://api.themoviedb.org/3/movie/{movie_id}",
-            params={"api_key": TMDB_API_KEY, "append_to_response": "credits"},
-            timeout=10,
-        )
-        r2.raise_for_status()
-        mdata = r2.json()
-
-        runtime_min = mdata.get("runtime")
-        release_date = mdata.get("release_date") or ""
-        tmdb_year = release_date[:4] if release_date else None
-
-        director = ""
-        for c in mdata.get("credits", {}).get("crew", []):
-            if c.get("job") == "Director":
-                director = c.get("name")
-                break
-
-        final_year = tmdb_year or year_hint
-
-        meta = {
-            "runtime_min": runtime_min,
-            "director": director,
-            "year": final_year,
-        }
-
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO tmdb_cache
-                (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                title, year_hint, movie_id,
-                runtime_min, director, final_year,
-                datetime.utcnow().isoformat(),
-            ),
-        )
-        conn.commit()
-
-        _MEM_CACHE[key] = meta
-        return meta
-
-    except Exception:
-        meta = {"runtime_min": None, "director": None, "year": year_hint}
-        _MEM_CACHE[key] = meta
-        return meta
-
-
-def scrape_pcc():
-    url = "https://princecharlescinema.com/whats-on/"
-    conn = init_db()
-    showtimes = []
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-
-        print("Loading PCC What's On…")
-        page.goto(url, timeout=60000)
-        page.wait_for_selector("div.film_list-outer")
-
-        films = page.locator("div.film_list-outer")
-        total = films.count()
-        print(f"Found {total} films\n")
-
-        for i in range(total):
-            f = films.nth(i)
-            print(f"[{i+1}/{total}] Extracting film…")
-
-            title = f.locator("a.liveeventtitle").inner_text().strip()
-            link = f.locator("a.liveeventtitle").get_attribute("href")
-
-            # Year
-            spans = f.locator("div.running-time span").all_inner_texts()
-            pcc_year = None
-            for s in spans:
-                s = s.strip()
-                if s.isdigit() and len(s) == 4:
-                    pcc_year = s
-
-            # Format
-            tags = f.locator("span.tag").all_inner_texts()
-            projection_format = ""
-            for t in tags:
-                t = t.strip().upper()
-                if any(fmt in t for fmt in ["70MM", "35MM", "16MM", "DCP", "DIGITAL"]):
-                    projection_format = t
-                    break
-
-            # Times grouped by date
-            perf = f.locator("ul.performance-list-items")
-            children = perf.locator(":scope > *")
-
-            grouped = defaultdict(list)
-            current_date = None
-
-            for j in range(children.count()):
-                el = children.nth(j)
-                tag = el.evaluate("e => e.tagName.toLowerCase()")
-
-                if tag == "div" and "heading" in (el.get_attribute("class") or ""):
-                    current_date = el.inner_text().strip()
-                elif tag == "li" and current_date:
-                    t_el = el.locator("span.time")
-                    if t_el.count():
-                        t = t_el.inner_text().strip()
-                        if t:
-                            grouped[current_date].append(t)
-
-            if not grouped:
-                continue
-
-            # Metadata
-            meta = tmdb_get_metadata(conn, title, pcc_year)
-            director = meta.get("director") or ""
-            runtime_min = meta.get("runtime_min")
-            final_year = meta.get("year") or pcc_year or ""
-
-            for date_str, times in grouped.items():
-                times_sorted = sorted(times)
-
-                dt = dateparser.parse(f"{date_str} {times_sorted[0]}")
-                if not dt:
-                    continue
-
-                # Year rollover fix
-                today = datetime.today()
-                if dt.month in (1, 2) and today.month in (11, 12):
-                    dt = dt.replace(year=today.year + 1)
-
-                date_out = dt.strftime("%Y-%m-%d")
-
-                raw = {
-                    "venue": CINEMA_NAME,
-                    "date": date_out,
-                    "title": title,
-                    "times": times_sorted,
-                    "format": projection_format,
-                    "extra": "",
-                    "url": link,
-                }
-
-                normal = normalise_row(raw)
-                merge_rows(showtimes, normal)
-
-        browser.close()
-        conn.close()
-
-    return showtimes
-
-
-# ---------------------------------------------------------
-# Main execution
-# ---------------------------------------------------------
-
-if __name__ == "__main__":
-    listings = scrape_pcc()
-
-    # Export cleaned rows
-    all_rows = export_rows(listings).split("\n")
-
-    # Load memory file
-    existing = load_existing("pcc_existing.txt")
-
-    # Incremental filter
-    new_rows = [r for r in all_rows if r not in existing]
-
-    # Update memory file
-    updated = existing.union(new_rows)
-    save_existing("pcc_existing.txt", updated)
-
-    # Print rows to paste into CMS
-    print("\n".join(new_rows))
-
-    # ---------------------------------------------------
-    # TIMESTAMPED BACKUP
-    # ---------------------------------------------------
-    backup_dir = "scraper_backups"
-    os.makedirs(backup_dir, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_path = f"{backup_dir}/pcc_{timestamp}.txt"
-
-    with open(backup_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(new_rows))
-
-    print(f"\nSaved backup to: {backup_path}")
+"""
+intervals_cleaning.py
+
+Shared cleaning, normalisation, merging, exporting for all scrapers.
+"""
+
+import re
+import html
+
+
+# ============================================================
+# CLEANER — OPTION B (strip only matched quotes)
+# ============================================================
+
+def clean(text):
+    """Clean text while preserving unmatched leading apostrophes (e.g. ’71)."""
+    if text is None:
+        return ""
+
+    s = str(text)
+    s = html.unescape(s).strip()
+
+    # Strip only matched pairs
+    matched = [
+        ('"', '"'),
+        ("'", "'"),
+        ("“", "”"),
+        ("‘", "’"),
+    ]
+
+    for left, right in matched:
+        if s.startswith(left) and s.endswith(right):
+            return s[len(left):-len(right)].strip()
+
+    # Collapse multiple spaces
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
+
+# ============================================================
+# ROW NORMALISER — unified schema
+# ============================================================
+
+def normalise_row(row):
+
+    normal = {
+        "venue": "",
+        "date": "",
+        "title": "",
+        "times": [],
+        "format": "",
+        "extra": "",
+        "url": "",
+        "director": "",
+        "runtime_min": "",
+        "year": "",
+    }
+
+    for key in normal:
+        if key not in row:
+            continue
+
+        if key == "times":
+            if isinstance(row[key], list):
+                normal[key] = [clean(t) for t in row[key] if t]
+            else:
+                t = clean(row[key])
+                normal[key] = [t] if t else []
+        else:
+            normal[key] = clean(row[key]) if isinstance(row[key], str) else row[key]
+
+    return normal
+
+
+# ============================================================
+# MERGE — one row per (venue, date, title)
+# ============================================================
+
+def merge_rows(existing, new):
+
+    key = (new["venue"], new["date"], new["title"])
+
+    for row in existing:
+        if (row["venue"], row["date"], row["title"]) == key:
+
+            # Merge times (dedupe)
+            for t in new["times"]:
+                if t not in row["times"]:
+                    row["times"].append(t)
+
+            # Fill metadata if missing
+            for field in ["format", "extra", "url", "director", "runtime_min", "year"]:
+                if not row[field] and new[field]:
+                    row[field] = new[field]
+
+            return
+
+    existing.append(new)
+
+
+# ============================================================
+# EXPORT — your required format
+# DATE;VENUE;TITLE;DIRECTOR;RUNTIME;FORMAT;TIME;YEAR;NOTES
+# ============================================================
+
+def export_rows(rows):
+
+    rows_sorted = sorted(rows, key=lambda r: (r["date"], r["title"]))
+
+    lines = []
+    for r in rows_sorted:
+
+        times_str = ", ".join(sorted(r["times"]))
+
+        line = ";".join([
+            r["date"],
+            r["venue"],
+            r["title"],
+            r["director"],
+            str(r["runtime_min"] or ""),
+            r["format"],
+            times_str,
+            r["year"],
+            r["extra"],
+        ])
+
+        lines.append(line)
+
+    return "\n".join(lines)
