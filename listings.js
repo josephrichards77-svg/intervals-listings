@@ -32,31 +32,23 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   
   // -------------------------------------------------------
-  // GUARANTEED FIX: Manually apply class to cards in the final row (RESPONSIVE)
+  // GUARANTEED FIX: Manually apply class to cards in the final row
   // -------------------------------------------------------
   function applyLastRowFix() {
     // Select all container elements with the class 'screenings'
     document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-
-      // 1. Determine columns based on current window width (must match your CSS media queries!)
-      let columns = 3; 
-      if (window.innerWidth <= 1024 && window.innerWidth > 768) {
-        columns = 2; // Matches tablet CSS flex setting
-      } else if (window.innerWidth <= 768) {
-        columns = 1; // Matches mobile CSS flex setting
-      }
       
-      // 2. Clear old classes (important when this runs multiple times on resize/data change)
+      // 1. Remove the class from all children first to reset the state
       Array.from(screeningsContainer.children).forEach(card => {
         card.classList.remove('last-row-card');
       });
 
-      // 3. Apply the class to the last N cards, where N is the calculated column count
+      // 2. Apply the class to the last 3 children (The number of columns on desktop)
       const children = Array.from(screeningsContainer.children);
-      // Use slice(-columns) to target the number of cards matching the current layout
-      const lastN = children.slice(-columns);
+      // Use slice(-3) to target the last three elements regardless of total count
+      const lastThree = children.slice(-3);
       
-      lastN.forEach(card => {
+      lastThree.forEach(card => {
         card.classList.add('last-row-card');
       });
     });
@@ -222,8 +214,5 @@ const year     = row[7];  // YEAR column
   // -------------------------------------------------------
   updateCalendar();
   loadListingsFor(currentDate);
-
-  // We also run the fix on resize to handle changes between 3/2/1 columns
-  window.addEventListener('resize', applyLastRowFix); 
 
 });
