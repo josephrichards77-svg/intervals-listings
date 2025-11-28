@@ -9,36 +9,49 @@ import html
 
 
 # ============================================================
-# CLEANER — OPTION B (strip only matched quotes)
+# CLEANER — preserves <a>, fixes ALL CAPS, strips matched quotes
 # ============================================================
 
 def clean(text):
-    """Clean text while preserving unmatched leading apostrophes (e.g. ’71)."""
+    """Clean text while preserving HTML tags and titles like ’71."""
     if text is None:
         return ""
 
     s = str(text)
     s = html.unescape(s).strip()
 
-    # Strip only matched pairs
-    matched = [
+    # -------------------------------------------------------
+    # NEVER touch HTML <a> tags — return unchanged
+    # -------------------------------------------------------
+    if s.startswith("<a ") or s.startswith("<A "):
+        return s
+
+    # Strip only matched leading/trailing quotes
+    matched_pairs = [
         ('"', '"'),
         ("'", "'"),
         ("“", "”"),
         ("‘", "’"),
     ]
-
-    for left, right in matched:
+    for left, right in matched_pairs:
         if s.startswith(left) and s.endswith(right):
-            return s[len(left):-len(right)].strip()
+            s = s[len(left):-len(right)].strip()
+            break
 
-    # Collapse multiple spaces
+    # Fix ALL CAPS titles → Title Case (but not acronyms)
+    # e.g. "BARTON FINK" → "Barton Fink"
+    # but "UFO" remains "UFO"
+    if s.isupper() and len(s) > 3 and " " in s:
+        s = s.title()
+
+    # Collapse redundant spaces
     s = re.sub(r"\s{2,}", " ", s).strip()
+
     return s
 
 
 # ============================================================
-# ROW NORMALISER — unified schema
+# NORMALISER — ensures all fields exist and are strings
 # ============================================================
 
 def normalise_row(row):
@@ -47,27 +60,35 @@ def normalise_row(row):
         "venue": "",
         "date": "",
         "title": "",
-        "times": [],
-        "format": "",
-        "extra": "",
-        "url": "",
         "director": "",
         "runtime_min": "",
+        "format": "",
+        "times": [],
         "year": "",
+        "extra": "",
+        "url": "",
     }
 
     for key in normal:
         if key not in row:
             continue
 
+        value = row[key]
+
+        # Times always become a list of clean strings
         if key == "times":
-            if isinstance(row[key], list):
-                normal[key] = [clean(t) for t in row[key] if t]
+            if isinstance(value, list):
+                normal["times"] = [clean(t) for t in value if t]
             else:
-                t = clean(row[key])
-                normal[key] = [t] if t else []
+                t = clean(value)
+                normal["times"] = [t] if t else []
+            continue
+
+        # Everything else becomes a clean string
+        if value is None:
+            normal[key] = ""
         else:
-            normal[key] = clean(row[key]) if isinstance(row[key], str) else row[key]
+            normal[key] = clean(str(value))
 
     return normal
 
@@ -77,7 +98,7 @@ def normalise_row(row):
 # ============================================================
 
 def merge_rows(existing, new):
-
+    """Merge new row into existing list in-place."""
     key = (new["venue"], new["date"], new["title"])
 
     for row in existing:
@@ -88,19 +109,23 @@ def merge_rows(existing, new):
                 if t not in row["times"]:
                     row["times"].append(t)
 
-            # Fill metadata if missing
-            for field in ["format", "extra", "url", "director", "runtime_min", "year"]:
+            # Fill missing metadata fields
+            for field in [
+                "format", "extra", "url",
+                "director", "runtime_min", "year"
+            ]:
                 if not row[field] and new[field]:
                     row[field] = new[field]
 
-            return
+            return  # Done
 
     existing.append(new)
 
 
 # ============================================================
-# EXPORT — your required format
+# EXPORT — FIXED 9-COLUMN FORMAT
 # DATE;VENUE;TITLE;DIRECTOR;RUNTIME;FORMAT;TIME;YEAR;NOTES
+# No spaces in empty fields → CMS safe
 # ============================================================
 
 def export_rows(rows):
@@ -110,18 +135,31 @@ def export_rows(rows):
     lines = []
     for r in rows_sorted:
 
-        times_str = ", ".join(sorted(r["times"]))
+        # Guarantee everything is a string
+        date     = r.get("date", "") or ""
+        venue    = r.get("venue", "") or ""
+        title    = r.get("title", "") or ""
+        director = r.get("director", "") or ""
+        runtime  = str(r.get("runtime_min", "") or "")
+        fmt      = r.get("format", "") or ""
+        year     = r.get("year", "") or ""
+        notes    = r.get("extra", "") or ""
 
+        # Times is list → comma separated
+        times = r.get("times", [])
+        time_str = ", ".join(sorted(times)) if times else ""
+
+        # NO SPACES around semicolons — critical for CMS
         line = ";".join([
-            r["date"],
-            r["venue"],
-            r["title"],
-            r["director"],
-            str(r["runtime_min"] or ""),
-            r["format"],
-            times_str,
-            r["year"],
-            r["extra"],
+            date,
+            venue,
+            title,
+            director,
+            runtime,
+            fmt,
+            time_str,
+            year,
+            notes,
         ])
 
         lines.append(line)
