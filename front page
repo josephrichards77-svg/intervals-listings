@@ -295,16 +295,156 @@
 </div>
 
 <style>
+/* ===========================================
+   INTERVALS — POLISHED SCREEN-SLATE LISTINGS
+   =========================================== */
+
+/* WRAPPER */
 #cinema-listings {
-  font-family:'Neue Haas Grotesk Display Pro', Helvetica, Arial, sans-serif;
-  max-width:1080px;
-  margin:0 auto;
-  padding:40px;
-  background:#FDFDFB;
+  font-family: 'Neue Haas Grotesk Display Pro', Helvetica, Arial, sans-serif;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 40px 40px;
+  background: #FDFDFB;
 }
 
-/* ... FULL cleaned version omitted here for brevity but included above ... */
+/* CINEMA HEADERS & FULL-WIDTH SEPARATOR */
+.cinema {
+  margin-left: -40px;
+  margin-right: -40px;
+  padding-left: 40px;
+  padding-right: 40px;
+  margin-top: 10px;
+  margin-bottom: 20px;
+  position: relative;
+  padding-bottom: 20px;
+}
+
+/* The FULL-WIDTH separator line (The true terminator line) */
+.cinema::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-bottom: 1px solid #eee;
+}
+
+.cinema:last-of-type::after {
+  border-bottom: none;
+}
+
+.cinema h2 {
+  text-align: center;
+  font-size: 2.0rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+/* 3–COLUMN DESKTOP GRID */
+.screenings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  align-items: stretch;
+}
+
+/* FILM CARD */
+.screening {
+  flex: 0 0 calc((100% - 28px) / 3);
+  box-sizing: border-box;
+  padding: 10px 4px 12px;
+  border-bottom: none;
+  border-right: none;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  line-height: 1.25;
+}
+
+/* Contained horizontal line on ALL cards */
+.screening::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+/* JS override — last row has no line */
+.last-row-card::before {
+  content: none !important;
+  border-bottom: none !important;
+}
+
+/* FILM TITLE */
+.screening a {
+  font-size: 1.25rem !important;
+  font-weight: 300 !important;
+  line-height: 1.15 !important;
+  color: #000;
+  text-decoration: underline;
+  margin-bottom: 6px;
+}
+
+.screening a:hover {
+  text-decoration: underline;
+}
+
+/* METADATA */
+.screening .details {
+  font-size: 0.875rem;
+  color: #555;
+  font-weight: 300 !important;
+  margin-bottom: 10px;
+}
+
+/* TIME */
+.screening .time {
+  font-size: 0.875rem;
+  font-weight: 700 !important;
+  color: #000;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* RESPONSIVE — TABLET (2 columns) */
+@media (max-width: 1024px) {
+  .cinema {
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .screening {
+    flex: 0 0 calc((100% - 14px) / 2);
+  }
+}
+
+/* RESPONSIVE — MOBILE (1 column) */
+@media (max-width: 768px) {
+  .screening {
+    flex: 0 0 100%;
+    padding: 14px 0;
+  }
+}
+
+/* FINAL TITLE ADJUSTMENT */
+#cinema-listings .screening a {
+  font-weight: 500 !important;
+  font-size: 1.5rem !important;
+  line-height: 1.15 !important;
+  color: #000 !important;
+}
 </style>
+
 
 <div 
   id="calendar-nav"
