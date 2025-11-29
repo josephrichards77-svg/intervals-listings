@@ -18,19 +18,54 @@ from intervals_cleaning import normalise_row, merge_rows, export_rows
 CINEMA_NAME = "Prince Charles Cinema"
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 
-# Local DB cache next to this script
 DB_PATH = Path(__file__).with_name("tmdb_cache.db")
-_MEM_CACHE = {}   # in-memory TMDB cache
+_MEM_CACHE = {}
 
 
 # ============================================================
-# TMDB CACHE INITIALISATION
+# PREFIX CLEANING (PCC)
+# ============================================================
+
+PCC_PREFIXES = [
+    "PCC Presents:",
+    "Late Night:",
+    "Late Night 35mm:",
+    "Cult Classics:",
+    "Special Screening:",
+    "Marathon:",
+    "All-Nighter:",
+    "Double Bill:",
+    "Triple Bill:",
+    "Mystery Movie:",
+    "35mm:",
+    "70mm:",
+    "4K Restoration:",
+]
+
+def strip_pcc_prefixes(title):
+    t = title.strip()
+    found = []
+    changed = True
+
+    while changed:
+        changed = False
+        for p in PCC_PREFIXES:
+            if t.lower().startswith(p.lower()):
+                found.append(p.rstrip(":"))
+                t = t[len(p):].strip()
+                changed = True
+
+    return t, found
+
+
+
+# ============================================================
+# TMDB CACHE
 # ============================================================
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS tmdb_cache (
             title TEXT NOT NULL,
             year_hint TEXT,
@@ -41,8 +76,7 @@ def init_db():
             last_updated TEXT,
             PRIMARY KEY (title, year_hint)
         )
-        """
-    )
+    """)
     conn.commit()
     return conn
 
@@ -51,24 +85,14 @@ def init_db():
 # TMDB METADATA FETCHER
 # ============================================================
 
-def tmdb_get_metadata(conn, title: str, year_hint: str | None):
-    """
-    Return dict: {runtime_min, director, year}
-    Uses:
-    1. in-memory cache
-    2. sqlite cache
-    3. TMDB API
-    """
-
+def tmdb_get_metadata(conn, title, year_hint):
     key = (title, year_hint or "")
 
-    # 1. Memory cache
     if key in _MEM_CACHE:
         return _MEM_CACHE[key]
 
-    # 2. SQLite
     cur = conn.execute(
-        "SELECT runtime_min, director, final_year FROM tmdb_cache WHERE title = ? AND year_hint IS ?",
+        "SELECT runtime_min, director, final_year FROM tmdb_cache WHERE title=? AND year_hint IS ?",
         (title, year_hint),
     )
     row = cur.fetchone()
@@ -77,12 +101,11 @@ def tmdb_get_metadata(conn, title: str, year_hint: str | None):
         meta = {
             "runtime_min": runtime_min,
             "director": director,
-            "year": final_year or year_hint,
+            "year": final_year or year_hint
         }
         _MEM_CACHE[key] = meta
         return meta
 
-    # 3. TMDB API
     if not TMDB_API_KEY:
         meta = {"runtime_min": None, "director": None, "year": year_hint}
         _MEM_CACHE[key] = meta
@@ -108,7 +131,6 @@ def tmdb_get_metadata(conn, title: str, year_hint: str | None):
 
         movie = results[0]
 
-        # Try match by year
         if year_hint:
             for m in results:
                 rd = (m.get("release_date") or "")[:4]
@@ -122,7 +144,6 @@ def tmdb_get_metadata(conn, title: str, year_hint: str | None):
             _MEM_CACHE[key] = meta
             return meta
 
-        # Get details
         r2 = requests.get(
             f"https://api.themoviedb.org/3/movie/{movie_id}",
             params={"api_key": TMDB_API_KEY, "append_to_response": "credits"},
@@ -146,26 +167,17 @@ def tmdb_get_metadata(conn, title: str, year_hint: str | None):
         meta = {
             "runtime_min": runtime_min,
             "director": director or "",
-            "year": final_year or "",
+            "year": final_year or ""
         }
 
-        # Save
-        conn.execute(
-            """
+        conn.execute("""
             INSERT OR REPLACE INTO tmdb_cache
-              (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
+            (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                title,
-                year_hint,
-                movie_id,
-                runtime_min,
-                director,
-                final_year,
-                datetime.utcnow().isoformat(),
-            )
-        )
+        """, (
+            title, year_hint, movie_id, runtime_min, director,
+            final_year, datetime.utcnow().isoformat()
+        ))
         conn.commit()
 
         _MEM_CACHE[key] = meta
@@ -175,6 +187,7 @@ def tmdb_get_metadata(conn, title: str, year_hint: str | None):
         meta = {"runtime_min": None, "director": None, "year": year_hint}
         _MEM_CACHE[key] = meta
         return meta
+
 
 
 # ============================================================
@@ -206,6 +219,9 @@ def scrape_pcc():
             title_raw = f.locator("a.liveeventtitle").inner_text().strip()
             url_raw = f.locator("a.liveeventtitle").get_attribute("href")
 
+            # Clean PCC prefixes
+            clean_title, prefixes = strip_pcc_prefixes(title_raw)
+
             # Year hint
             spans = f.locator("div.running-time span").all_inner_texts()
             year_hint = None
@@ -218,9 +234,9 @@ def scrape_pcc():
             tags = f.locator("span.tag").all_inner_texts()
             projection_format = ""
             for t in tags:
-                t = t.strip().upper()
-                if any(fmt in t for fmt in ["70MM", "35MM", "16MM", "DCP", "DIGITAL"]):
-                    projection_format = t
+                t_up = t.upper()
+                if any(x in t_up for x in ["35MM", "70MM", "16MM", "DCP", "4K", "DIGITAL"]):
+                    projection_format = t_up
                     break
 
             # Times grouped by date
@@ -249,7 +265,7 @@ def scrape_pcc():
                 continue
 
             # TMDB metadata
-            meta = tmdb_get_metadata(conn, title_raw, year_hint)
+            meta = tmdb_get_metadata(conn, clean_title, year_hint)
             director = meta.get("director", "")
             runtime = meta.get("runtime_min") or ""
             year_final = meta.get("year") or (year_hint or "")
@@ -262,30 +278,32 @@ def scrape_pcc():
                 if not dt:
                     continue
 
-                # Year rollover
                 today = datetime.today()
-                if dt.month in (1, 2) and today.month in (11, 12):
+                if dt.month in (1,2) and today.month in (11,12):
                     dt = dt.replace(year=today.year + 1)
 
                 date_iso = dt.strftime("%Y-%m-%d")
 
-                # Create clickable title
-                title_html = f'<a href="{url_raw}" target="_blank">{title_raw}</a>'
-
                 raw = {
                     "venue": CINEMA_NAME,
                     "date": date_iso,
-                    "title": title_html,
+                    "title": clean_title,  # clean title HERE
                     "director": director,
                     "runtime_min": runtime,
                     "format": projection_format,
                     "times": times_sorted,
                     "year": year_final,
-                    "extra": "",
+                    "extra": "; ".join(prefixes),
                     "url": url_raw,
                 }
 
                 normal = normalise_row(raw)
+
+                # Apply hyperlink AFTER normalise_row
+                normal["title"] = (
+                    f'<a href="{normal["url"]}" target="_blank">{clean_title}</a>'
+                )
+
                 merge_rows(rows, normal)
 
         browser.close()
@@ -294,18 +312,19 @@ def scrape_pcc():
     return rows
 
 
+
 # ============================================================
-# INCREMENTAL + BACKUP
+# MAIN OUTPUT + BACKUP
 # ============================================================
 
 def load_existing(path):
     if not Path(path).exists():
         return set()
-    return set(
+    return {
         line.strip()
-        for line in open(path, "r", encoding="utf-8")
+        for line in Path(path).read_text().splitlines()
         if line.strip()
-    )
+    }
 
 
 def save_existing(path, rows):
@@ -314,17 +333,12 @@ def save_existing(path, rows):
             f.write(r + "\n")
 
 
-# ============================================================
-# MAIN
-# ============================================================
-
 if __name__ == "__main__":
     rows = scrape_pcc()
 
     exported = export_rows(rows)
     lines = exported.split("\n")
 
-    # Incremental
     existing_path = Path(__file__).with_name("pcc_existing.txt")
     existing = load_existing(existing_path)
 
@@ -332,17 +346,14 @@ if __name__ == "__main__":
     updated = existing.union(new_rows)
     save_existing(existing_path, updated)
 
-    # Print only NEW rows for CMS
     print("\n".join(new_rows))
 
-    # Timestamped backup in same folder
     backup_dir = Path(__file__).with_name("pcc_backups")
     backup_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     backup_path = backup_dir / f"pcc_{timestamp}.txt"
 
-    with open(backup_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(new_rows))
+    backup_path.write_text("\n".join(new_rows))
 
     print(f"\nBackup saved → {backup_path}")
