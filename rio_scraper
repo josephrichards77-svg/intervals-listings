@@ -25,9 +25,19 @@ TMDB_DB_FILENAME = "tmdb_cache.db"
 DATE_FMT = "%Y-%m-%d"
 TIME_FMT = "%H:%M"
 
-# Persistent HTTP session
 session = requests.Session()
 
+# ============================================================
+# DEBUG FLAGS
+# ============================================================
+
+DEBUG_CLEANER = True
+DEBUG_TMBD = False
+DEBUG_SCRAPER = False
+
+def debug(flag, *msg):
+    if flag:
+        print(*msg)
 
 # ============================================================
 # HELPERS
@@ -44,15 +54,46 @@ def normalize_url(href: str) -> str:
 
 
 def strip_rating(title: str) -> str:
-    """
-    Removes BBFC ratings like:
-    U, PG, 12A, 12, 15, 18
-    and variants like "12A Cert" or "(15)" or trailing parentheses.
-    """
     rating_re = re.compile(r"\b(U|PG|12A|12|15|18)\s*(Cert)?\)?$", re.IGNORECASE)
     cleaned = rating_re.sub("", title).strip()
     return re.sub(r"\s{2,}", " ", cleaned)
 
+
+def strip_prefixes(title: str):
+    """
+    Returns: clean_title, list_of_prefixes
+    Strips out things like 'Pink Palace:', 'Film Club:', etc.
+    """
+    prefixes = [
+        "Pink Palace:",
+        "Film Club:",
+        "Screentalk:",
+        "ScreenTalk:",
+        "Q&A:",
+        "Q & A:",
+        "Special Screening:",
+        "Cult Classic:",
+        "Restoration:",
+        "Preview:",
+        "Introduction:",
+        "Intro:",
+        "Late Night:",
+        "Matinee:",
+    ]
+
+    collected = []
+    cleaned = title.strip()
+    changed = True
+
+    while changed:
+        changed = False
+        for p in prefixes:
+            if cleaned.lower().startswith(p.lower()):
+                collected.append(p[:-1])  # store prefix without colon
+                cleaned = cleaned[len(p):].strip()
+                changed = True
+
+    return cleaned, collected
 
 # ============================================================
 # TMDB CACHE + LOOKUP
@@ -63,17 +104,18 @@ _tmdb_conn = None
 def get_tmdb_conn():
     """
     Ensures SQLite file and table exist.
+    If old schema is detected (contains year_hint), rebuilds table.
     """
     global _tmdb_conn
     db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
 
     if _tmdb_conn is None:
-        first_time = not os.path.exists(db_path)
         _tmdb_conn = sqlite3.connect(db_path)
         _tmdb_conn.row_factory = sqlite3.Row
 
-        # Ensure schema exists
         cur = _tmdb_conn.cursor()
+
+        # New canonical schema
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tmdb_cache (
                 title TEXT PRIMARY KEY,
@@ -86,6 +128,42 @@ def get_tmdb_conn():
         """)
         _tmdb_conn.commit()
 
+        # Detect old schema
+        cur.execute("PRAGMA table_info(tmdb_cache)")
+        cols = [c[1] for c in cur.fetchall()]
+
+        if "year_hint" in cols:
+            print("⚠ Detected old tmdb_cache schema — migrating…")
+
+            cur.execute("""
+                SELECT title, tmdb_id, runtime_min, director, final_year, last_updated
+                FROM tmdb_cache
+            """)
+            old_rows = cur.fetchall()
+
+            cur.execute("DROP TABLE tmdb_cache")
+
+            cur.execute("""
+                CREATE TABLE tmdb_cache (
+                    title TEXT PRIMARY KEY,
+                    tmdb_id INTEGER,
+                    runtime_min INTEGER,
+                    director TEXT,
+                    final_year INTEGER,
+                    last_updated TEXT
+                )
+            """)
+
+            for r in old_rows:
+                cur.execute("""
+                    INSERT OR REPLACE INTO tmdb_cache
+                    (title, tmdb_id, runtime_min, director, final_year, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, tuple(r))
+
+            _tmdb_conn.commit()
+            print("✔ Migration complete.")
+
     return _tmdb_conn
 
 
@@ -94,13 +172,18 @@ def tmdb_cache_lookup(title_clean):
     cur = conn.cursor()
     cur.execute("SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)", (title_clean,))
     row = cur.fetchone()
+    debug(DEBUG_TMBD, f"[TMDB] Cache lookup for '{title_clean}':", row)
     return dict(row) if row else {}
 
 
 def tmdb_cache_upsert(title, tmdb_id, runtime, director, year):
     conn = get_tmdb_conn()
     cur = conn.cursor()
+
     ts = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+
+    debug(DEBUG_TMBD,
+          f"[TMDB] Upsert: {title}, id={tmdb_id}, runtime={runtime}, director={director}, year={year}")
 
     cur.execute("""
         INSERT INTO tmdb_cache (title, tmdb_id, runtime_min, director, final_year, last_updated)
@@ -117,8 +200,7 @@ def tmdb_cache_upsert(title, tmdb_id, runtime, director, year):
 
 
 def tmdb_fetch(title_clean):
-    if not TMDB_API_KEY:
-        return {}
+    debug(DEBUG_TMBD, f"[TMDB] Fetching from API: '{title_clean}'")
 
     try:
         r = session.get(
@@ -135,11 +217,9 @@ def tmdb_fetch(title_clean):
     if not results:
         return {}
 
-    # Choose *most popular* result instead of first
     best = max(results, key=lambda r: r.get("popularity") or 0)
     tmdb_id = best["id"]
 
-    # details
     try:
         det = session.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}",
@@ -153,7 +233,6 @@ def tmdb_fetch(title_clean):
     release_date = det.get("release_date") or ""
     year = int(release_date[:4]) if len(release_date) >= 4 else None
 
-    # director
     director = ""
     try:
         credits = session.get(
@@ -169,6 +248,9 @@ def tmdb_fetch(title_clean):
     except Exception:
         pass
 
+    debug(DEBUG_TMBD,
+          f"[TMDB] Final result: director={director}, year={year}, runtime={runtime}")
+
     tmdb_cache_upsert(title_clean, tmdb_id, runtime, director, year)
 
     return {
@@ -179,6 +261,8 @@ def tmdb_fetch(title_clean):
 
 
 def lookup_tmdb(title_clean):
+    debug(DEBUG_TMBD, f"[TMDB] Lookup for {title_clean}")
+
     cached = tmdb_cache_lookup(title_clean)
 
     director = cached.get("director") or ""
@@ -187,10 +271,9 @@ def lookup_tmdb(title_clean):
 
     if not (director and runtime and year):
         fresh = tmdb_fetch(title_clean)
-        if fresh:
-            director = fresh["director"] or director
-            runtime = fresh["runtime"] or runtime
-            year = fresh["year"] or year
+        director = fresh.get("director", director)
+        runtime = fresh.get("runtime", runtime)
+        year = fresh.get("year", year)
 
     return {
         "director": director,
@@ -198,7 +281,6 @@ def lookup_tmdb(title_clean):
         "year": year or "",
         "format": "DCP",
     }
-
 
 # ============================================================
 # DATACLASS
@@ -212,13 +294,14 @@ class ShowTime:
     description: str
     img: str
     extra: dict = field(default_factory=dict)
-
+    notes: str = ""  # PREFIXES GO HERE
 
 # ============================================================
 # SCRAPER
 # ============================================================
 
 def scrape():
+    debug(DEBUG_SCRAPER, "🔍 [SCRAPER] Starting Rio scrape…")
     out = []
 
     with sync_playwright() as p:
@@ -226,35 +309,45 @@ def scrape():
         page = browser.new_page()
         page.goto(URL)
 
-        # Safer extraction of JS variable
         data = page.evaluate("window.Events || null")
         if not data or "Events" not in data:
             browser.close()
             raise RuntimeError("Rio feed missing JS variable 'Events'")
 
         events = data["Events"]
+        debug(DEBUG_SCRAPER, f"[SCRAPER] Found {len(events)} events")
 
         for event in events:
+            debug(DEBUG_SCRAPER, "[SCRAPER] Raw event title:", event["Title"])
+
             title_raw = html.unescape(event["Title"])
-            title = strip_rating(title_raw)
+            title_cleaned_rating = strip_rating(title_raw)
+
+            # Strip prefixes → TMDB uses cleaned title
+            title_for_tmdb, prefixes = strip_prefixes(title_cleaned_rating)
+
+            # Use cleaned title for TMDB
+            tmdb = lookup_tmdb(title_for_tmdb)
+
             link = normalize_url(event["URL"])
             description = html.unescape(event["Synopsis"])
             img = normalize_url(event["ImageURL"])
 
-            tmdb = lookup_tmdb(title)
-
             for perf in event["Performances"]:
-                dt_str = f"{perf['StartDate']} {perf['StartTime']}"
-                dt = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H%M")
+                dt = datetime.datetime.strptime(
+                    f"{perf['StartDate']} {perf['StartTime']}",
+                    "%Y-%m-%d %H%M"
+                )
 
                 out.append(
                     ShowTime(
-                        title=title,
+                        title=title_cleaned_rating,   # original Rio title WITH prefixes
                         link=link,
                         datetime=dt,
                         description=description,
                         img=img,
                         extra=tmdb,
+                        notes="; ".join(prefixes),    # PREFIXES → NOTES COLUMN
                     )
                 )
 
@@ -263,19 +356,19 @@ def scrape():
     print(f"Scraped {len(out)} Rio showtimes")
     return out
 
-
 # ============================================================
-# INTERVALS CLEANING + MERGING + EXPORT
+# CLEANING + MERGING
 # ============================================================
 
 from intervals_cleaning import normalise_row, merge_rows, export_rows
 
 def convert_showtimes_to_intervals_rows(showtimes):
+    debug(DEBUG_CLEANER, "🔧 Cleaner started…")
     rows = []
 
     for s in showtimes:
         date_iso = s.datetime.strftime(DATE_FMT)
-        time_24  = s.datetime.strftime(TIME_FMT)
+        time_24 = s.datetime.strftime(TIME_FMT)
 
         raw = {
             "venue": CINEMA_NAME,
@@ -286,20 +379,32 @@ def convert_showtimes_to_intervals_rows(showtimes):
             "format": s.extra.get("format", "DCP"),
             "times": [time_24],
             "year": s.extra.get("year", ""),
-            "extra": "",
+            "extra": s.notes or "",        # NOTES GO INTO EXTRA (9th COLUMN)
             "url": s.link,
         }
 
+        debug(DEBUG_CLEANER, "   ▶️ normalise_row input:", raw)
         normal = normalise_row(raw)
+        debug(DEBUG_CLEANER, "   ✅ normalise_row output:", normal)
 
-        clean_title = normal["title"]
-        clean_url   = normal["url"]
-        normal["title"] = f'<a href="{clean_url}" target="_blank">{clean_title}</a>'
+        # hyperlink the cleaned title
+        normal["title"] = f'<a href="{normal["url"]}" target="_blank">{normal["title"]}</a>'
 
+        before = len(rows)
         merge_rows(rows, normal)
+        after = len(rows)
 
+        if after > before:
+            debug(DEBUG_CLEANER, "      ➕ Added new row")
+        else:
+            debug(DEBUG_CLEANER, "      🔁 Merged into existing row")
+
+    debug(DEBUG_CLEANER, f"🔧 Cleaner finished. Final rows: {len(rows)}")
     return rows
 
+# ============================================================
+# INCREMENTAL SAVE + BACKUP
+# ============================================================
 
 def incremental_save_and_backup(rows, scraper_name="rio"):
     exported = export_rows(rows)
@@ -325,17 +430,14 @@ def incremental_save_and_backup(rows, scraper_name="rio"):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     backup_path = backup_dir / f"{scraper_name}_{timestamp}.txt"
 
-    # Store full snapshot, not only new rows
     with open(backup_path, "w", encoding="utf-8") as f:
         f.write(exported)
 
     print(f"\nBackup saved → {backup_path}")
-
     return new_rows
 
-
 # ============================================================
-# EXPORT
+# SEMICOLON EXPORT
 # ============================================================
 
 def export_to_semicolon(showtimes, filename="rio_semicolon.txt"):
@@ -356,20 +458,21 @@ def export_to_semicolon(showtimes, filename="rio_semicolon.txt"):
                 "format": s.extra.get("format", "DCP"),
                 "year": s.extra.get("year", ""),
                 "times": [],
+                "notes": s.notes or "",
             }
 
         grouped[key]["times"].append(time)
 
     with open(filename, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, delimiter=";")
+        writer = csv.writer(f, delimiter="; ")
 
-        writer.writerow(["DATE", "VENUE", "TITLE", "DIRECTOR", "RUNTIME", "FORMAT", "TIME", "YEAR"])
+        writer.writerow(["DATE", "VENUE", "TITLE", "DIRECTOR", "RUNTIME",
+                         "FORMAT", "TIME", "YEAR", "EXTRA"])
 
-        # stable output ordering
-        for _, data in sorted(grouped.items(), key=lambda x: (x[1]["date"], x[1]["title"])):
+        for _, data in sorted(grouped.items(),
+                              key=lambda x: (x[1]["date"], x[1]["title"])):
             times = ",".join(sorted(set(data["times"])))
-            safe_link = normalize_url(data["link"])
-            title_html = f'<a href="{safe_link}">{data["title"]}</a>'
+            title_html = f'<a href="{normalize_url(data["link"])}">{data["title"]}</a>'
 
             writer.writerow([
                 data["date"],
@@ -380,10 +483,10 @@ def export_to_semicolon(showtimes, filename="rio_semicolon.txt"):
                 data["format"],
                 times,
                 data["year"],
+                data["notes"],
             ])
 
     print(f"✔ Exported {len(grouped)} Rio rows → {filename}")
-
 
 # ============================================================
 # RUN
@@ -393,4 +496,4 @@ if __name__ == "__main__":
     showtimes = scrape()
     rows = convert_showtimes_to_intervals_rows(showtimes)
     new_rows = incremental_save_and_backup(rows, "rio")
-    print("\n".join(new_rows))
+    print("\n".join(sorted(new_rows)))
