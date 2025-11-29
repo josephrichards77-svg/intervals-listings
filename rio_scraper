@@ -1,121 +1,83 @@
-import html
-import os
-import re
-import csv
-import sqlite3
-import datetime
-import requests
-
+import html, os, re, csv, sqlite3, datetime, requests
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from dataclasses import dataclass, field
+from intervals_cleaning import normalise_row, merge_rows, export_rows
 
 # ============================================================
 # CONFIG
 # ============================================================
-
 CINEMA_NAME = "The Rio"
-CINEMA_SHORTCODE = "RI"
 BASE_URL = "https://riocinema.org.uk"
 URL = f"{BASE_URL}/Rio.dll/WhatsOn"
-
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 TMDB_DB_FILENAME = "tmdb_cache.db"
-
 DATE_FMT = "%Y-%m-%d"
 TIME_FMT = "%H:%M"
-
 session = requests.Session()
-
-# ============================================================
-# DEBUG FLAGS
-# ============================================================
-
-DEBUG_CLEANER = False
-DEBUG_TMBD = False
-DEBUG_SCRAPER = False
-
-def debug(flag, *msg):
-    if flag:
-        print(*msg)
 
 # ============================================================
 # HELPERS
 # ============================================================
+def normalize_url(h):
+    if not h: return ""
+    if h.startswith(("http://","https://")): return h
+    if h.startswith("/"): return BASE_URL + h
+    return BASE_URL + "/" + h
 
-def normalize_url(href: str) -> str:
-    if not href:
-        return ""
-    if href.startswith(("http://", "https://")):
-        return href
-    if href.startswith("/"):
-        return BASE_URL + href
-    return BASE_URL + "/" + href
+def strip_rating(t):
+    return re.sub(r"\b(U|PG|12A|12|15|18)\b$", "", t).strip()
 
+# Strict, explicit prefix list only
+PREFIXES = [
+    "Pink Palace:",
+    "Film Club:",
+    "Screentalk:",
+    "ScreenTalk:",
+    "Q&A:",
+    "Q & A:",
+    "Special Screening:",
+    "Cult Classic:",
+    "Restoration:",
+    "Preview:",
+    "Introduction:",
+    "Intro:",
+    "Late Night:",
+    "Matinee:",
+]
 
-def strip_rating(title: str) -> str:
-    rating_re = re.compile(r"\b(U|PG|12A|12|15|18)\s*(Cert)?\)?$", re.IGNORECASE)
-    cleaned = rating_re.sub("", title).strip()
-    return re.sub(r"\s{2,}", " ", cleaned)
-
-
-def strip_prefixes(title: str):
+def strip_prefixes(title):
     """
-    Returns: clean_title, list_of_prefixes
-    Strips out things like 'Pink Palace:', 'Film Club:', etc.
+    Removes only explicit prefixes defined in PREFIXES.
+    Case-insensitive. Supports multiple stacked prefixes.
     """
-    prefixes = [
-        "Pink Palace:",
-        "Film Club:",
-        "Screentalk:",
-        "ScreenTalk:",
-        "Q&A:",
-        "Q & A:",
-        "Special Screening:",
-        "Cult Classic:",
-        "Restoration:",
-        "Preview:",
-        "Introduction:",
-        "Intro:",
-        "Late Night:",
-        "Matinee:",
-    ]
-
-    collected = []
-    cleaned = title.strip()
+    t = title.strip()
+    found = []
     changed = True
 
     while changed:
         changed = False
-        for p in prefixes:
-            if cleaned.lower().startswith(p.lower()):
-                collected.append(p[:-1])  # store prefix without colon
-                cleaned = cleaned[len(p):].strip()
+        for p in PREFIXES:
+            if t.lower().startswith(p.lower()):
+                found.append(p.rstrip(":"))
+                t = t[len(p):].strip()
                 changed = True
 
-    return cleaned, collected
+    return t, found
 
 # ============================================================
-# TMDB CACHE + LOOKUP
+# TMDB CACHE
 # ============================================================
-
 _tmdb_conn = None
 
 def get_tmdb_conn():
-    """
-    Ensures SQLite file and table exist.
-    If old schema is detected (contains year_hint), rebuilds table.
-    """
     global _tmdb_conn
     db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
 
     if _tmdb_conn is None:
         _tmdb_conn = sqlite3.connect(db_path)
         _tmdb_conn.row_factory = sqlite3.Row
-
         cur = _tmdb_conn.cursor()
-
-        # New canonical schema
         cur.execute("""
             CREATE TABLE IF NOT EXISTS tmdb_cache (
                 title TEXT PRIMARY KEY,
@@ -124,68 +86,21 @@ def get_tmdb_conn():
                 director TEXT,
                 final_year INTEGER,
                 last_updated TEXT
-            )
-        """)
+            )""")
         _tmdb_conn.commit()
-
-        # Detect old schema
-        cur.execute("PRAGMA table_info(tmdb_cache)")
-        cols = [c[1] for c in cur.fetchall()]
-
-        if "year_hint" in cols:
-            print("⚠ Detected old tmdb_cache schema — migrating…")
-
-            cur.execute("""
-                SELECT title, tmdb_id, runtime_min, director, final_year, last_updated
-                FROM tmdb_cache
-            """)
-            old_rows = cur.fetchall()
-
-            cur.execute("DROP TABLE tmdb_cache")
-
-            cur.execute("""
-                CREATE TABLE tmdb_cache (
-                    title TEXT PRIMARY KEY,
-                    tmdb_id INTEGER,
-                    runtime_min INTEGER,
-                    director TEXT,
-                    final_year INTEGER,
-                    last_updated TEXT
-                )
-            """)
-
-            for r in old_rows:
-                cur.execute("""
-                    INSERT OR REPLACE INTO tmdb_cache
-                    (title, tmdb_id, runtime_min, director, final_year, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, tuple(r))
-
-            _tmdb_conn.commit()
-            print("✔ Migration complete.")
 
     return _tmdb_conn
 
-
-def tmdb_cache_lookup(title_clean):
-    conn = get_tmdb_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)", (title_clean,))
+def tmdb_cache_lookup(title):
+    cur = get_tmdb_conn().cursor()
+    cur.execute("SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)", (title,))
     row = cur.fetchone()
-    debug(DEBUG_TMBD, f"[TMDB] Cache lookup for '{title_clean}':", row)
     return dict(row) if row else {}
-
 
 def tmdb_cache_upsert(title, tmdb_id, runtime, director, year):
     conn = get_tmdb_conn()
-    cur = conn.cursor()
-
     ts = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
-
-    debug(DEBUG_TMBD,
-          f"[TMDB] Upsert: {title}, id={tmdb_id}, runtime={runtime}, director={director}, year={year}")
-
-    cur.execute("""
+    conn.execute("""
         INSERT INTO tmdb_cache (title, tmdb_id, runtime_min, director, final_year, last_updated)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(title) DO UPDATE SET
@@ -195,97 +110,80 @@ def tmdb_cache_upsert(title, tmdb_id, runtime, director, year):
             final_year=excluded.final_year,
             last_updated=excluded.last_updated
     """, (title, tmdb_id, runtime, director, year, ts))
-
     conn.commit()
 
-
-def tmdb_fetch(title_clean):
-    debug(DEBUG_TMBD, f"[TMDB] Fetching from API: '{title_clean}'")
-
-    try:
-        r = session.get(
-            "https://api.themoviedb.org/3/search/movie",
-            params={"api_key": TMDB_API_KEY, "query": title_clean},
-            timeout=10
-        )
-        r.raise_for_status()
-        s = r.json()
-    except Exception:
+def tmdb_fetch(title):
+    if not TMDB_API_KEY:
         return {}
 
-    results = s.get("results") or []
+    try:
+        res = session.get(
+            "https://api.themoviedb.org/3/search/movie",
+            params={"api_key": TMDB_API_KEY, "query": title},
+            timeout=10
+        ).json()
+    except:
+        return {}
+
+    results = res.get("results") or []
     if not results:
         return {}
 
-    best = max(results, key=lambda r: r.get("popularity") or 0)
-    tmdb_id = best["id"]
+    movie = max(results, key=lambda r: r.get("popularity") or 0)
+    tmdb_id = movie["id"]
 
-    try:
-        det = session.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-            params={"api_key": TMDB_API_KEY},
-            timeout=10
-        ).json()
-    except Exception:
-        return {}
+    det = session.get(
+        f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+        params={"api_key": TMDB_API_KEY},
+        timeout=10
+    ).json()
 
     runtime = det.get("runtime")
-    release_date = det.get("release_date") or ""
-    year = int(release_date[:4]) if len(release_date) >= 4 else None
+    rd = det.get("release_date") or ""
+    year = int(rd[:4]) if len(rd) >= 4 else None
+
+    credits = session.get(
+        f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
+        params={"api_key": TMDB_API_KEY},
+        timeout=10
+    ).json()
 
     director = ""
-    try:
-        credits = session.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
-            params={"api_key": TMDB_API_KEY},
-            timeout=10
-        ).json()
+    for c in credits.get("crew", []):
+        if c.get("job") == "Director":
+            director = c["name"]
+            break
 
-        for c in credits.get("crew", []):
-            if c.get("job") == "Director":
-                director = c["name"]
-                break
-    except Exception:
-        pass
-
-    debug(DEBUG_TMBD,
-          f"[TMDB] Final result: director={director}, year={year}, runtime={runtime}")
-
-    tmdb_cache_upsert(title_clean, tmdb_id, runtime, director, year)
+    tmdb_cache_upsert(title, tmdb_id, runtime, director, year)
 
     return {
         "director": director or "",
         "runtime": runtime or "",
-        "year": year or "",
+        "year": year or ""
     }
 
+def lookup_tmdb(title):
+    c = tmdb_cache_lookup(title)
+    d = c.get("director") or ""
+    r = c.get("runtime_min") or ""
+    y = c.get("final_year") or ""
 
-def lookup_tmdb(title_clean):
-    debug(DEBUG_TMBD, f"[TMDB] Lookup for {title_clean}")
-
-    cached = tmdb_cache_lookup(title_clean)
-
-    director = cached.get("director") or ""
-    runtime = cached.get("runtime_min") or ""
-    year = cached.get("final_year") or ""
-
-    if not (director and runtime and year):
-        fresh = tmdb_fetch(title_clean)
-        director = fresh.get("director", director)
-        runtime = fresh.get("runtime", runtime)
-        year = fresh.get("year", year)
+    if not (d and r and y):
+        f = tmdb_fetch(title)
+        d = f.get("director", d)
+        r = f.get("runtime", r)
+        y = f.get("year", y)
 
     return {
-        "director": director,
-        "runtime": str(runtime) if runtime else "",
-        "year": year or "",
-        "format": "DCP",
+        "director": d,
+        "runtime": str(r) if r else "",
+        "year": y,
+        "format": "DCP"
     }
 
 # ============================================================
-# DATACLASS
+# DATA STRUCTURE
 # ============================================================
-
 @dataclass
 class ShowTime:
     title: str
@@ -293,207 +191,126 @@ class ShowTime:
     datetime: datetime.datetime
     description: str
     img: str
-    extra: dict = field(default_factory=dict)
-    notes: str = ""  # PREFIXES GO HERE
+    extra: dict
+    notes: str = ""
 
 # ============================================================
 # SCRAPER
 # ============================================================
-
 def scrape():
-    debug(DEBUG_SCRAPER, "🔍 [SCRAPER] Starting Rio scrape…")
     out = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        b = p.chromium.launch(headless=True)
+        page = b.new_page()
         page.goto(URL)
 
         data = page.evaluate("window.Events || null")
-        if not data or "Events" not in data:
-            browser.close()
-            raise RuntimeError("Rio feed missing JS variable 'Events'")
+        if not data:
+            raise RuntimeError("Rio feed missing 'Events'")
 
-        events = data["Events"]
-        debug(DEBUG_SCRAPER, f"[SCRAPER] Found {len(events)} events")
+        for e in data["Events"]:
+            raw = html.unescape(e["Title"])
+            t1 = strip_rating(raw)
+            title, prefixes = strip_prefixes(t1)
 
-        for event in events:
-            debug(DEBUG_SCRAPER, "[SCRAPER] Raw event title:", event["Title"])
+            tmdb = lookup_tmdb(title)
 
-            title_raw = html.unescape(event["Title"])
-            title_cleaned_rating = strip_rating(title_raw)
+            link = normalize_url(e["URL"])
+            desc = html.unescape(e["Synopsis"])
+            img = normalize_url(e["ImageURL"])
 
-            # Strip prefixes → TMDB uses cleaned title
-            title_for_tmdb, prefixes = strip_prefixes(title_cleaned_rating)
-
-            # Use cleaned title for TMDB
-            tmdb = lookup_tmdb(title_for_tmdb)
-
-            link = normalize_url(event["URL"])
-            description = html.unescape(event["Synopsis"])
-            img = normalize_url(event["ImageURL"])
-
-            for perf in event["Performances"]:
+            for perf in e["Performances"]:
                 dt = datetime.datetime.strptime(
                     f"{perf['StartDate']} {perf['StartTime']}",
                     "%Y-%m-%d %H%M"
                 )
 
-                out.append(
-                    ShowTime(
-                        title=title_cleaned_rating,   # original Rio title WITH prefixes
-                        link=link,
-                        datetime=dt,
-                        description=description,
-                        img=img,
-                        extra=tmdb,
-                        notes="; ".join(prefixes),    # PREFIXES → NOTES COLUMN
-                    )
-                )
+                out.append(ShowTime(
+                    title=title,
+                    link=link,
+                    datetime=dt,
+                    description=desc,
+                    img=img,
+                    extra=tmdb,
+                    notes="; ".join(prefixes)
+                ))
 
-        browser.close()
+        b.close()
 
     print(f"Scraped {len(out)} Rio showtimes")
     return out
 
 # ============================================================
-# CLEANING + MERGING
+# CONVERT → INTERVALS ROWS
 # ============================================================
-
-from intervals_cleaning import normalise_row, merge_rows, export_rows
-
-def convert_showtimes_to_intervals_rows(showtimes):
-    debug(DEBUG_CLEANER, "🔧 Cleaner started…")
+def convert_to_rows(showtimes):
     rows = []
 
     for s in showtimes:
-        date_iso = s.datetime.strftime(DATE_FMT)
-        time_24 = s.datetime.strftime(TIME_FMT)
-
         raw = {
             "venue": CINEMA_NAME,
-            "date": date_iso,
-            "title": s.title,
-            "director": s.extra.get("director", ""),
-            "runtime_min": s.extra.get("runtime", ""),
-            "format": s.extra.get("format", "DCP"),
-            "times": [time_24],
-            "year": s.extra.get("year", ""),
-            "extra": s.notes or "",        # NOTES GO INTO EXTRA (9th COLUMN)
+            "date": s.datetime.strftime(DATE_FMT),
+            "title": s.title,   # CLEAN title ("Halston")
+            "director": s.extra.get("director",""),
+            "runtime_min": s.extra.get("runtime",""),
+            "format": s.extra.get("format","DCP"),
+            "times": [s.datetime.strftime(TIME_FMT)],
+            "year": s.extra.get("year",""),
+            "extra": s.notes,
             "url": s.link,
         }
 
-        debug(DEBUG_CLEANER, "   ▶️ normalise_row input:", raw)
         normal = normalise_row(raw)
-        debug(DEBUG_CLEANER, "   ✅ normalise_row output:", normal)
 
-        # hyperlink the cleaned title
+        # FORCE CLEAN TITLE
+        normal["title"] = s.title
         normal["title"] = f'<a href="{normal["url"]}" target="_blank">{normal["title"]}</a>'
 
-        before = len(rows)
         merge_rows(rows, normal)
-        after = len(rows)
 
-        if after > before:
-            debug(DEBUG_CLEANER, "      ➕ Added new row")
-        else:
-            debug(DEBUG_CLEANER, "      🔁 Merged into existing row")
-
-    debug(DEBUG_CLEANER, f"🔧 Cleaner finished. Final rows: {len(rows)}")
     return rows
 
 # ============================================================
 # INCREMENTAL SAVE + BACKUP
 # ============================================================
+def incremental_save(rows, name="rio"):
 
-def incremental_save_and_backup(rows, scraper_name="rio"):
+    def add_spaces(line):
+        return re.sub(r";(?=\S)", "; ", line)
+
     exported = export_rows(rows)
+    exported = add_spaces(exported)
     lines = exported.split("\n")
 
     base = Path(__file__)
-    existing_path = base.with_name(f"{scraper_name}_existing.txt")
-    backup_dir = base.with_name(f"{scraper_name}_backups")
+    existing_path = base.with_name(f"{name}_existing.txt")
+    backup_dir = base.with_name(f"{name}_backups")
 
     if existing_path.exists():
-        existing = {line.strip() for line in existing_path.read_text().split("\n") if line.strip()}
+        old = add_spaces(existing_path.read_text())
+        existing = {l.strip() for l in old.split("\n") if l.strip()}
     else:
         existing = set()
 
-    new_rows = [r for r in lines if r not in existing]
+    new = [l for l in lines if l.strip() and l not in existing]
 
-    updated = existing.union(new_rows)
-    with open(existing_path, "w", encoding="utf-8") as f:
-        for r in sorted(updated):
-            f.write(r + "\n")
+    updated = existing.union(new)
+    existing_path.write_text("\n".join(sorted(updated)))
 
     backup_dir.mkdir(exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_path = backup_dir / f"{scraper_name}_{timestamp}.txt"
+    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup = backup_dir / f"{name}_{ts}.txt"
+    backup.write_text(exported)
 
-    with open(backup_path, "w", encoding="utf-8") as f:
-        f.write(exported)
-
-    print(f"\nBackup saved → {backup_path}")
-    return new_rows
+    print(f"Backup saved → {backup}")
+    return new
 
 # ============================================================
-# SEMICOLON EXPORT
+# MAIN
 # ============================================================
-
-def export_to_semicolon(showtimes, filename="rio_semicolon.txt"):
-    grouped = {}
-
-    for s in showtimes:
-        date = s.datetime.strftime(DATE_FMT)
-        time = s.datetime.strftime(TIME_FMT)
-        key = (s.title, date)
-
-        if key not in grouped:
-            grouped[key] = {
-                "date": date,
-                "title": s.title,
-                "link": s.link,
-                "director": s.extra.get("director", ""),
-                "runtime": s.extra.get("runtime", ""),
-                "format": s.extra.get("format", "DCP"),
-                "year": s.extra.get("year", ""),
-                "times": [],
-                "notes": s.notes or "",
-            }
-
-        grouped[key]["times"].append(time)
-
-    with open(filename, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, delimiter="; ")
-
-        writer.writerow(["DATE", "VENUE", "TITLE", "DIRECTOR", "RUNTIME",
-                         "FORMAT", "TIME", "YEAR", "EXTRA"])
-
-        for _, data in sorted(grouped.items(),
-                              key=lambda x: (x[1]["date"], x[1]["title"])):
-            times = ",".join(sorted(set(data["times"])))
-            title_html = f'<a href="{normalize_url(data["link"])}">{data["title"]}</a>'
-
-            writer.writerow([
-                data["date"],
-                CINEMA_NAME,
-                title_html,
-                data["director"],
-                data["runtime"],
-                data["format"],
-                times,
-                data["year"],
-                data["notes"],
-            ])
-
-    print(f"✔ Exported {len(grouped)} Rio rows → {filename}")
-
-# ============================================================
-# RUN
-# ============================================================
-
 if __name__ == "__main__":
     showtimes = scrape()
-    rows = convert_showtimes_to_intervals_rows(showtimes)
-    new_rows = incremental_save_and_backup(rows, "rio")
-    print("\n".join(sorted(new_rows)))
+    rows = convert_to_rows(showtimes)
+    new = incremental_save(rows, "rio")
+    print("\n".join(sorted(new)))
