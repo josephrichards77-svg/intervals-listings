@@ -1,6 +1,6 @@
 import os
 import json
-import datetime
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from collections import defaultdict
@@ -103,9 +103,7 @@ def extract_barbican_metadata(browser, link):
 
 def scrape_barbican():
     rows = []
-    today = datetime.date.today()
-
-    conn = init_db()
+    today = datetime.today().date()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -152,7 +150,8 @@ def scrape_barbican():
                 year_hint = b_year
 
                 # TMDB backup if missing
-                meta = tmdb_get_metadata(conn, title, year_hint)
+                meta = tmdb_get_metadata(title, year_hint)
+
 
                 director = director or meta.get("director") or ""
                 runtime_min = runtime_min or meta.get("runtime_min")
@@ -174,7 +173,7 @@ def scrape_barbican():
                         if not dt_attr:
                             continue
 
-                        dt = datetime.datetime.fromisoformat(dt_attr)
+                        dt = datetime.fromisoformat(dt_attr)
                         dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
 
                         # incremental: skip past dates
@@ -215,7 +214,6 @@ def scrape_barbican():
             page_number += 1
 
         browser.close()
-        conn.close()
 
     # sort rows
     rows.sort(key=lambda r: r["date"])
@@ -227,7 +225,7 @@ def scrape_barbican():
 # ============================================================
 
 def save_txt(rows):
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    timestamp = datetime.now().strftime(...)
     backup_path = BACKUP_DIR / f"barbican_{timestamp}.txt"
 
     # backup previous if exists
