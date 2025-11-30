@@ -1,8 +1,13 @@
-import html, os, re, csv, sqlite3, datetime, requests
+import html, os, re, csv, sqlite3
 from pathlib import Path
+from datetime import datetime
+from collections import defaultdict
+import requests
+import dateparser
 from playwright.sync_api import sync_playwright
-from dataclasses import dataclass, field
-from intervals_cleaning import normalise_row, merge_rows, export_rows
+
+# Cleaner tools (assuming these are shared across projects)
+from intervals_cleaning import normalise_row, merge_rows, export_rows 
 
 # ============================================================
 # CONFIG
@@ -10,51 +15,26 @@ from intervals_cleaning import normalise_row, merge_rows, export_rows
 CINEMA_NAME = "The Rio"
 BASE_URL = "https://riocinema.org.uk"
 URL = f"{BASE_URL}/Rio.dll/WhatsOn"
-TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
-TMDB_DB_FILENAME = "tmdb_cache.db"
-DATE_FMT = "%Y-%m-%d"
-TIME_FMT = "%H:%M"
-session = requests.Session()
+TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b" # Must be same as other scrapers
+
+# Shared database file
+DB_PATH = Path(__file__).with_name("tmdb_cache.db") 
+_MEM_CACHE = {}
 
 # ============================================================
-# HELPERS
+# PREFIX CLEANING (RIO)
 # ============================================================
-def normalize_url(h):
-    if not h: return ""
-    if h.startswith(("http://","https://")): return h
-    if h.startswith("/"): return BASE_URL + h
-    return BASE_URL + "/" + h
-
-def strip_rating(t):
-    return re.sub(r"\b(U|PG|12A|12|15|18)\b$", "", t).strip()
-
-# Strict, explicit prefix list only
 PREFIXES = [
-    "Pink Palace:",
-    "Film Club:",
-    "Screentalk:",
-    "ScreenTalk:",
-    "Q&A:",
-    "Q & A:",
-    "Special Screening:",
-    "Cult Classic:",
-    "Restoration:",
-    "Preview:",
-    "Introduction:",
-    "Intro:",
-    "Late Night:",
-    "Matinee:",
+    "Pink Palace:", "Film Club:", "Screentalk:", "ScreenTalk:",
+    "Q&A:", "Q & A:", "Special Screening:", "Cult Classic:",
+    "Restoration:", "Preview:", "Introduction:", "Intro:",
+    "Late Night:", "Matinee:",
 ]
 
 def strip_prefixes(title):
-    """
-    Removes only explicit prefixes defined in PREFIXES.
-    Case-insensitive. Supports multiple stacked prefixes.
-    """
     t = title.strip()
     found = []
     changed = True
-
     while changed:
         changed = False
         for p in PREFIXES:
@@ -62,181 +42,217 @@ def strip_prefixes(title):
                 found.append(p.rstrip(":"))
                 t = t[len(p):].strip()
                 changed = True
-
     return t, found
 
+def normalize_url(h):
+    if not h: return ""
+    if h.startswith(("http://","https://")): return h
+    if h.startswith("/"): return BASE_URL + h
+    return BASE_URL + "/" + h
+
+def strip_rating(t):
+    # Rio ratings are usually outside the main title, but keep this safety check
+    return re.sub(r"\b(U|PG|12A|12|15|18)\b$", "", t).strip()
+
 # ============================================================
-# TMDB CACHE
+# TMDB CACHE (UNIFIED LOGIC)
 # ============================================================
-_tmdb_conn = None
 
-def get_tmdb_conn():
-    global _tmdb_conn
-    db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
-
-    if _tmdb_conn is None:
-        _tmdb_conn = sqlite3.connect(db_path)
-        _tmdb_conn.row_factory = sqlite3.Row
-        cur = _tmdb_conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS tmdb_cache (
-                title TEXT PRIMARY KEY,
-                tmdb_id INTEGER,
-                runtime_min INTEGER,
-                director TEXT,
-                final_year INTEGER,
-                last_updated TEXT
-            )""")
-        _tmdb_conn.commit()
-
-    return _tmdb_conn
-
-def tmdb_cache_lookup(title):
-    cur = get_tmdb_conn().cursor()
-    cur.execute("SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)", (title,))
-    row = cur.fetchone()
-    return dict(row) if row else {}
-
-def tmdb_cache_upsert(title, tmdb_id, runtime, director, year):
-    conn = get_tmdb_conn()
-    ts = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+def init_db():
+    """Initializes DB with the unified (title, year_hint) schema."""
+    conn = sqlite3.connect(DB_PATH)
     conn.execute("""
-        INSERT INTO tmdb_cache (title, tmdb_id, runtime_min, director, final_year, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(title) DO UPDATE SET
-            tmdb_id=excluded.tmdb_id,
-            runtime_min=excluded.runtime_min,
-            director=excluded.director,
-            final_year=excluded.final_year,
-            last_updated=excluded.last_updated
-    """, (title, tmdb_id, runtime, director, year, ts))
+        CREATE TABLE IF NOT EXISTS tmdb_cache (
+            title TEXT NOT NULL,
+            year_hint TEXT,
+            tmdb_id INTEGER,
+            runtime_min INTEGER,
+            director TEXT,
+            final_year TEXT,
+            last_updated TEXT,
+            PRIMARY KEY (title, year_hint)
+        )
+    """)
     conn.commit()
+    return conn
 
-def tmdb_fetch(title):
+# NOTE: This tmdb_get_metadata is the unified version from your PCC scraper.
+def tmdb_get_metadata(conn, title: str, year_hint: str | None):
+    """Fetches TMDB metadata using the unified cache structure."""
+    key = (title, year_hint or "")
+    
+    if key in _MEM_CACHE: return _MEM_CACHE[key]
+
+    cur = conn.execute(
+        "SELECT runtime_min, director, final_year FROM tmdb_cache WHERE title = ? AND year_hint IS ?",
+        (title, year_hint),
+    )
+    row = cur.fetchone()
+    if row:
+        runtime_min, director, final_year = row
+        meta = {
+            "runtime_min": runtime_min,
+            "director": director,
+            "year": final_year or year_hint,
+        }
+        _MEM_CACHE[key] = meta
+        return meta
+
     if not TMDB_API_KEY:
-        return {}
+        meta = {"runtime_min": None, "director": None, "year": year_hint}
+        _MEM_CACHE[key] = meta
+        return meta
 
     try:
-        res = session.get(
-            "https://api.themoviedb.org/3/search/movie",
-            params={"api_key": TMDB_API_KEY, "query": title},
-            timeout=10
-        ).json()
-    except:
-        return {}
+        # --- Search by title (and optional year_hint) ---
+        params = {"api_key": TMDB_API_KEY, "query": title}
+        if year_hint: params["year"] = year_hint
 
-    results = res.get("results") or []
-    if not results:
-        return {}
+        r = requests.get(
+            "https://api.themoviedb.org/3/search/movie", params=params, timeout=10
+        )
+        r.raise_for_status()
+        results = r.json().get("results") or []
 
-    movie = max(results, key=lambda r: r.get("popularity") or 0)
-    tmdb_id = movie["id"]
+        if not results:
+            meta = {"runtime_min": None, "director": None, "year": year_hint}
+            _MEM_CACHE[key] = meta
+            return meta
 
-    det = session.get(
-        f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-        params={"api_key": TMDB_API_KEY},
-        timeout=10
-    ).json()
+        movie = results[0]
+        # Year matching logic (copied from your PCC logic)
+        if year_hint:
+            for m in results:
+                rd = (m.get("release_date") or "")[:4]
+                if rd == str(year_hint):
+                    movie = m; break
 
-    runtime = det.get("runtime")
-    rd = det.get("release_date") or ""
-    year = int(rd[:4]) if len(rd) >= 4 else None
+        movie_id = movie.get("id")
+        if not movie_id:
+            meta = {"runtime_min": None, "director": None, "year": year_hint}
+            _MEM_CACHE[key] = meta
+            return meta
 
-    credits = session.get(
-        f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
-        params={"api_key": TMDB_API_KEY},
-        timeout=10
-    ).json()
+        # --- Get details + credits ---
+        params = {"api_key": TMDB_API_KEY, "append_to_response": "credits"}
+        r2 = requests.get(
+            f"https://api.themoviedb.org/3/movie/{movie_id}",
+            params=params, timeout=10
+        )
+        r2.raise_for_status()
+        mdata = r2.json()
 
-    director = ""
-    for c in credits.get("crew", []):
-        if c.get("job") == "Director":
-            director = c["name"]
-            break
+        runtime_min = mdata.get("runtime")
+        release_date = mdata.get("release_date") or ""
+        tmdb_year = release_date[:4] if release_date else None
+        final_year = tmdb_year or year_hint
 
-    tmdb_cache_upsert(title, tmdb_id, runtime, director, year)
+        director = None
+        credits = (mdata.get("credits") or {}).get("crew") or []
+        for c in credits:
+            if c.get("job") == "Director":
+                director = c.get("name"); break
 
-    return {
-        "director": director or "",
-        "runtime": runtime or "",
-        "year": year or ""
-    }
+        meta = {
+            "runtime_min": runtime_min,
+            "director": director or "",
+            "year": final_year or "",
+        }
 
-def lookup_tmdb(title):
-    c = tmdb_cache_lookup(title)
-    d = c.get("director") or ""
-    r = c.get("runtime_min") or ""
-    y = c.get("final_year") or ""
+        # Store in SQLite (using the unified schema)
+        conn.execute("""
+            INSERT OR REPLACE INTO tmdb_cache
+            (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            title, year_hint, movie_id, runtime_min, director,
+            final_year, datetime.utcnow().isoformat()
+        ))
+        conn.commit()
 
-    if not (d and r and y):
-        f = tmdb_fetch(title)
-        d = f.get("director", d)
-        r = f.get("runtime", r)
-        y = f.get("year", y)
+        _MEM_CACHE[key] = meta
+        return meta
 
-    return {
-        "director": d,
-        "runtime": str(r) if r else "",
-        "year": y,
-        "format": "DCP"
-    }
-
-# ============================================================
-# DATA STRUCTURE
-# ============================================================
-@dataclass
-class ShowTime:
-    title: str
-    link: str
-    datetime: datetime.datetime
-    description: str
-    img: str
-    extra: dict
-    notes: str = ""
+    except Exception:
+        # Fallback on any error
+        meta = {"runtime_min": None, "director": None, "year": year_hint}
+        _MEM_CACHE[key] = meta
+        return meta
 
 # ============================================================
-# SCRAPER
+# SCRAPER CORE (Uses unified TMDB functions)
 # ============================================================
 def scrape():
+    """Scrapes Rio using the internal JavaScript data feed."""
     out = []
+    conn = init_db() # Initialize unified DB
 
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
         page = b.new_page()
-        page.goto(URL)
 
+        print("Loading Rio feed...")
+        try:
+            # We don't use networkidle here because we are reading a JS variable
+            page.goto(URL, timeout=60000)
+        except Exception as e:
+            print(f"Error loading Rio page: {e}")
+            b.close()
+            conn.close()
+            return []
+
+        # Access the JavaScript variable 'window.Events'
         data = page.evaluate("window.Events || null")
         if not data:
-            raise RuntimeError("Rio feed missing 'Events'")
+            print("Rio feed missing 'Events' data.")
+            b.close()
+            conn.close()
+            return []
 
-        for e in data["Events"]:
-            raw = html.unescape(e["Title"])
-            t1 = strip_rating(raw)
+        for e in data.get("Events", []):
+            raw_title = html.unescape(e["Title"])
+            
+            # Use a year_hint of None since Rio's feed doesn't easily provide one
+            year_hint = None 
+
+            # Clean prefixes and rating
+            t1 = strip_rating(raw_title) 
             title, prefixes = strip_prefixes(t1)
-
-            tmdb = lookup_tmdb(title)
-
+            notes = "; ".join(prefixes)
+            
+            # --- TMDB Lookup ---
+            tmdb = tmdb_get_metadata(conn, title, year_hint)
+            # -------------------
+            
+            director = tmdb.get("director", "")
+            runtime = tmdb.get("runtime_min", "")
+            final_year = tmdb.get("year", "")
+            
             link = normalize_url(e["URL"])
-            desc = html.unescape(e["Synopsis"])
-            img = normalize_url(e["ImageURL"])
+            
+            # Presume DCP/Digital as a default format
+            default_format = "DCP" 
 
             for perf in e["Performances"]:
-                dt = datetime.datetime.strptime(
-                    f"{perf['StartDate']} {perf['StartTime']}",
-                    "%Y-%m-%d %H%M"
-                )
+                dt_str = f"{perf['StartDate']} {perf['StartTime']}"
+                dt = datetime.datetime.strptime(dt_str, "%Y-%m-%d %H%M")
+                
+                # Check if the screening date is in the past (optional cleanup)
+                if dt < datetime.datetime.now():
+                    continue
 
-                out.append(ShowTime(
-                    title=title,
-                    link=link,
-                    datetime=dt,
-                    description=desc,
-                    img=img,
-                    extra=tmdb,
-                    notes="; ".join(prefixes)
-                ))
+                out.append({
+                    "title": title,
+                    "link": link,
+                    "datetime": dt,
+                    "director": director,
+                    "runtime_min": runtime,
+                    "year": final_year,
+                    "extra": notes,
+                })
 
         b.close()
+        conn.close()
 
     print(f"Scraped {len(out)} Rio showtimes")
     return out
@@ -246,25 +262,36 @@ def scrape():
 # ============================================================
 def convert_to_rows(showtimes):
     rows = []
+    default_format = "DCP" 
 
+    per_date = defaultdict(list)
+    # Group by (title, date)
     for s in showtimes:
+        key = (s["title"], s["datetime"].strftime("%Y-%m-%d"))
+        per_date[key].append(s)
+
+    for (title, date_str), listings in per_date.items():
+        # All listings for the same title/date have the same metadata
+        first = listings[0]
+        
+        times = sorted([l["datetime"].strftime("%H:%M") for l in listings])
+
         raw = {
             "venue": CINEMA_NAME,
-            "date": s.datetime.strftime(DATE_FMT),
-            "title": s.title,   # CLEAN title ("Halston")
-            "director": s.extra.get("director",""),
-            "runtime_min": s.extra.get("runtime",""),
-            "format": s.extra.get("format","DCP"),
-            "times": [s.datetime.strftime(TIME_FMT)],
-            "year": s.extra.get("year",""),
-            "extra": s.notes,
-            "url": s.link,
+            "date": date_str,
+            "title": title,
+            "director": first.get("director",""),
+            "runtime_min": first.get("runtime_min",""),
+            "format": default_format,
+            "times": times,
+            "year": first.get("year",""),
+            "extra": first.get("extra",""),
+            "url": first.get("link",""),
         }
 
         normal = normalise_row(raw)
 
-        # FORCE CLEAN TITLE
-        normal["title"] = s.title
+        # Apply hyperlink AFTER normalise_row
         normal["title"] = f'<a href="{normal["url"]}" target="_blank">{normal["title"]}</a>'
 
         merge_rows(rows, normal)
@@ -274,8 +301,10 @@ def convert_to_rows(showtimes):
 # ============================================================
 # INCREMENTAL SAVE + BACKUP
 # ============================================================
-def incremental_save(rows, name="rio"):
+# (Keeping your original incremental_save function here for completeness)
 
+def incremental_save(rows, name="rio"):
+    # NOTE: This function requires 're', 'Path', and 'datetime' from imports
     def add_spaces(line):
         return re.sub(r";(?=\S)", "; ", line)
 
@@ -310,7 +339,12 @@ def incremental_save(rows, name="rio"):
 # MAIN
 # ============================================================
 if __name__ == "__main__":
+    # ⚠️ REMINDER: Delete your existing tmdb_cache.db file once before running 
+    # this script and your other scrapers to start fresh with the unified schema.
+    print("--- Starting Rio Scraper ---")
     showtimes = scrape()
     rows = convert_to_rows(showtimes)
     new = incremental_save(rows, "rio")
+    
+    print("\n--- NEW RIO LISTINGS ---")
     print("\n".join(sorted(new)))
