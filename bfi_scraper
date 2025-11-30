@@ -19,9 +19,13 @@ INDEX_URL = "https://whatson.bfi.org.uk/Online/article/filmsindex"
 DATE_FMT = "%Y-%m-%d"
 TIME_FMT = "%H:%M"
 
-# Output files
-OUTPUT_FILE = "bfi_latest.csv"
-BACKUP_FILE = "bfi_latest_backup.csv"
+# TXT output version
+TXT_OUTPUT_FILE = "bfi_existing.txt"
+
+# Backup folder for txt exports
+BACKUP_DIR = Path("backups/bfi")
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
 
 # ============================================================
 # PREFIX CLEANING
@@ -229,10 +233,26 @@ def scrape_bfi():
 # SAVE CSV
 # ============================================================
 
-def save_csv(rows):
-    rotate_backups()
+def save_txt(rows):
+    """Write bfi_existing.txt and timestamped backups."""
+    # ----------------------------------------------------
+    # Create timestamped backup
+    # ----------------------------------------------------
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_path = BACKUP_DIR / f"bfi_{timestamp}.txt"
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    # If existing file exists, back it up
+    if os.path.exists(TXT_OUTPUT_FILE):
+        try:
+            os.replace(TXT_OUTPUT_FILE, backup_path)
+            print(f"Backup created: {backup_path}")
+        except Exception as e:
+            print(f"Warning: could not create backup: {e}")
+
+    # ----------------------------------------------------
+    # Write new TXT output
+    # ----------------------------------------------------
+    with open(TXT_OUTPUT_FILE, "w", encoding="utf-8") as f:
         for s in rows:
             f.write(
                 f"{s['date']};"
@@ -246,6 +266,9 @@ def save_csv(rows):
                 f"{s['extra']}\n"
             )
 
+    print(f"TXT saved to {TXT_OUTPUT_FILE}")
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -253,5 +276,5 @@ def save_csv(rows):
 if __name__ == "__main__":
     rows = scrape_bfi()
     print(f"\nExtracted {len(rows)} BFI rows.")
-    save_csv(rows)
-    print(f"Saved to {OUTPUT_FILE}")
+    save_txt(rows)
+
