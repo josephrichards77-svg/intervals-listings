@@ -1,0 +1,265 @@
+import os
+import json
+import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+from collections import defaultdict
+
+import requests
+from playwright.sync_api import sync_playwright
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+BASE_URL = "https://www.barbican.org.uk"
+CINEMA_NAME = "Barbican"
+
+DATE_FMT = "%Y-%m-%d"
+TIME_FMT = "%H:%M"
+
+TXT_OUTPUT_FILE = "barbican_existing.txt"
+
+BACKUP_DIR = Path("backups/barbican")
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
+
+# Use your shared TMDB SQLite helpers
+from your_tmdb_module import init_db, tmdb_get_metadata, RELEASE_YEAR_RE
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def parse_runtime_to_minutes(text):
+    """Convert '1hr 58min' → 118."""
+    if not text:
+        return None
+    text = text.lower().replace(" ", "")
+
+    hours = 0
+    minutes = 0
+
+    if "hr" in text:
+        before, after = text.split("hr", 1)
+        if before.isdigit():
+            hours = int(before)
+        text = after
+
+    if "min" in text:
+        before, _ = text.split("min", 1)
+        if before.isdigit():
+            minutes = int(before)
+
+    total = hours * 60 + minutes
+    return total if total > 0 else None
+
+
+def extract_barbican_metadata(browser, link):
+    """Extract director / runtime / year from film page."""
+    director = ""
+    runtime = None
+    year = None
+
+    page = browser.new_page()
+    try:
+        page.goto(link, timeout=60000)
+
+        items = page.locator("ul.label-value-list__list li")
+        total = items.count()
+
+        for i in range(total):
+            li = items.nth(i)
+
+            label_raw = li.locator(".label-value-list__label").first.text_content() or ""
+            value_raw = li.locator(".label-value-list__value").first.text_content() or ""
+
+            label = label_raw.strip()
+            value = value_raw.strip()
+
+            if label.startswith("Release year") and value.isdigit():
+                year = int(value)
+
+            elif label.startswith("Director"):
+                director = value.strip()
+
+            elif label.startswith("Runtime"):
+                runtime = parse_runtime_to_minutes(value)
+
+    except Exception as e:
+        print(f"[WARN] Could not read film page {link}: {e}")
+
+    finally:
+        page.close()
+
+    return director, runtime, year
+
+
+# ============================================================
+# SCRAPER
+# ============================================================
+
+def scrape_barbican():
+    rows = []
+    today = datetime.date.today()
+
+    conn = init_db()
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        page_number = 0
+
+        while True:
+            url = f"{BASE_URL}/whats-on?af[16]=16&page={page_number}"
+            print(f"Loading page {page_number + 1}: {url}")
+            page.goto(url, timeout=60000)
+
+            # end condition
+            if page.locator(".no-result-message").count() > 0:
+                break
+
+            films = page.locator("article.listing--event")
+            count = films.count()
+            if count == 0:
+                break
+
+            for i in range(count):
+                fd = films.nth(i)
+
+                # title + link
+                link_rel = fd.locator("a.search-listing__link").first.get_attribute("href")
+                if not link_rel:
+                    continue
+                link = BASE_URL + link_rel
+
+                title = fd.locator("h2.listing-title").first.text_content().strip()
+
+                # event ID
+                btn = fd.locator("button.saved-event-button").first
+                event_id = btn.get_attribute("data-saved-event-id")
+                if not event_id:
+                    continue
+
+                # Barbican metadata
+                b_director, b_runtime, b_year = extract_barbican_metadata(browser, link)
+
+                director = b_director
+                runtime_min = b_runtime
+                year_hint = b_year
+
+                # TMDB backup if missing
+                meta = tmdb_get_metadata(conn, title, year_hint)
+
+                director = director or meta.get("director") or ""
+                runtime_min = runtime_min or meta.get("runtime_min")
+                final_year = meta.get("year") or (year_hint or "")
+
+                # load performance times
+                perf_url = f"{BASE_URL}/whats-on/event/{event_id}/performances"
+                perf_page = browser.new_page()
+
+                times_by_date = defaultdict(set)
+
+                try:
+                    perf_page.goto(perf_url, timeout=60000)
+                    t_elems = perf_page.locator("time")
+                    t_count = t_elems.count()
+
+                    for j in range(t_count):
+                        dt_attr = t_elems.nth(j).get_attribute("datetime")
+                        if not dt_attr:
+                            continue
+
+                        dt = datetime.datetime.fromisoformat(dt_attr)
+                        dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
+
+                        # incremental: skip past dates
+                        if dt.date() < today:
+                            continue
+
+                        # year rollover (Dec → Jan)
+                        if dt.month == 1 and today.month == 12:
+                            dt = dt.replace(year=today.year + 1)
+
+                        date_s = dt.date().strftime(DATE_FMT)
+                        time_s = dt.strftime(TIME_FMT)
+                        times_by_date[date_s].add(time_s)
+
+                except Exception as e:
+                    print(f"[WARN] Could not read performances for {event_id}: {e}")
+
+                finally:
+                    perf_page.close()
+
+                # build output rows
+                for date_k, time_set in sorted(times_by_date.items()):
+                    rows.append(
+                        {
+                            "date": date_k,
+                            "venue": CINEMA_NAME,
+                            "title": title,
+                            "link": link,
+                            "director": director,
+                            "runtime": f"{runtime_min} min" if runtime_min else "",
+                            "format": "DCP",
+                            "time": ", ".join(sorted(time_set)),
+                            "year": final_year,
+                            "extra": "",
+                        }
+                    )
+
+            page_number += 1
+
+        browser.close()
+        conn.close()
+
+    # sort rows
+    rows.sort(key=lambda r: r["date"])
+    return rows
+
+
+# ============================================================
+# SAVE TXT WITH BACKUPS
+# ============================================================
+
+def save_txt(rows):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_path = BACKUP_DIR / f"barbican_{timestamp}.txt"
+
+    # backup previous if exists
+    if os.path.exists(TXT_OUTPUT_FILE):
+        try:
+            os.replace(TXT_OUTPUT_FILE, backup_path)
+            print(f"Backup created: {backup_path}")
+        except Exception as e:
+            print(f"[WARN] Could not create backup: {e}")
+
+    # write new txt
+    with open(TXT_OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for s in rows:
+            f.write(
+                f"{s['date']};"
+                f"{s['venue']};"
+                f"<a href=\"{s['link']}\" target=\"_blank\">{s['title']}</a>;"
+                f"{s['director']};"
+                f"{s['runtime']};"
+                f"{s['format']};"
+                f"{s['time']};"
+                f"{s['year']};"
+                f"{s['extra']}\n"
+            )
+
+    print(f"TXT saved to {TXT_OUTPUT_FILE}")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+    rows = scrape_barbican()
+    print(f"\nExtracted {len(rows)} Barbican rows.")
+    save_txt(rows)
