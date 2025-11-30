@@ -26,7 +26,8 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 
 # Use your shared TMDB SQLite helpers
-from your_tmdb_module import init_db, tmdb_get_metadata, RELEASE_YEAR_RE
+from tmdb_cache import init_db, tmdb_get_metadata, RELEASE_YEAR_RE
+
 
 # ============================================================
 # HELPERS
