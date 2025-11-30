@@ -125,7 +125,7 @@ def scrape_barbican():
             if count == 0:
                 break
 
-         for i in range(count):
+        for i in range(count):
     fd = films.nth(i)
 
     # title + link
@@ -137,81 +137,80 @@ def scrape_barbican():
     title = fd.locator("h2.listing-title").first.text_content().strip()
     print(f"[{i+1}/{count}] {title}")
 
+    # event ID
+    btn = fd.locator("button.saved-event-button").first
+    event_id = btn.get_attribute("data-saved-event-id")
+    if not event_id:
+        continue
 
-                # event ID
-                btn = fd.locator("button.saved-event-button").first
-                event_id = btn.get_attribute("data-saved-event-id")
-                if not event_id:
-                    continue
+    # Barbican metadata
+    b_director, b_runtime, b_year = extract_barbican_metadata(browser, link)
 
-                # Barbican metadata
-                b_director, b_runtime, b_year = extract_barbican_metadata(browser, link)
+    director = b_director
+    runtime_min = b_runtime
+    year_hint = b_year
 
-                director = b_director
-                runtime_min = b_runtime
-                year_hint = b_year
+    # TMDB backup if missing
+    meta = tmdb_get_metadata(title, year_hint)
 
-                # TMDB backup if missing
-                meta = tmdb_get_metadata(title, year_hint)
+    director = director or meta.get("director") or ""
+    runtime_min = runtime_min or meta.get("runtime_min")
+    final_year = meta.get("year") or (year_hint or "")
 
+    # load performance times
+    perf_url = f"{BASE_URL}/whats-on/event/{event_id}/performances"
+    perf_page = browser.new_page()
 
-                director = director or meta.get("director") or ""
-                runtime_min = runtime_min or meta.get("runtime_min")
-                final_year = meta.get("year") or (year_hint or "")
+    times_by_date = defaultdict(set)
 
-                # load performance times
-                perf_url = f"{BASE_URL}/whats-on/event/{event_id}/performances"
-                perf_page = browser.new_page()
+    try:
+        perf_page.goto(perf_url, timeout=60000)
+        t_elems = perf_page.locator("time")
+        t_count = t_elems.count()
 
-                times_by_date = defaultdict(set)
+        for j in range(t_count):
+            dt_attr = t_elems.nth(j).get_attribute("datetime")
+            if not dt_attr:
+                continue
 
-                try:
-                    perf_page.goto(perf_url, timeout=60000)
-                    t_elems = perf_page.locator("time")
-                    t_count = t_elems.count()
+            dt = datetime.fromisoformat(dt_attr)
+            dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
 
-                    for j in range(t_count):
-                        dt_attr = t_elems.nth(j).get_attribute("datetime")
-                        if not dt_attr:
-                            continue
+            # incremental: skip past dates
+            if dt.date() < today:
+                continue
 
-                        dt = datetime.fromisoformat(dt_attr)
-                        dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
+            # year rollover (Dec → Jan)
+            if dt.month == 1 and today.month == 12:
+                dt = dt.replace(year=today.year + 1)
 
-                        # incremental: skip past dates
-                        if dt.date() < today:
-                            continue
+            date_s = dt.date().strftime(DATE_FMT)
+            time_s = dt.strftime(TIME_FMT)
+            times_by_date[date_s].add(time_s)
 
-                        # year rollover (Dec → Jan)
-                        if dt.month == 1 and today.month == 12:
-                            dt = dt.replace(year=today.year + 1)
+    except Exception as e:
+        print(f"[WARN] Could not read performances for {event_id}: {e}")
 
-                        date_s = dt.date().strftime(DATE_FMT)
-                        time_s = dt.strftime(TIME_FMT)
-                        times_by_date[date_s].add(time_s)
+    finally:
+        perf_page.close()
 
-                except Exception as e:
-                    print(f"[WARN] Could not read performances for {event_id}: {e}")
+    # build output rows
+    for date_k, time_set in sorted(times_by_date.items()):
+        rows.append(
+            {
+                "date": date_k,
+                "venue": CINEMA_NAME,
+                "title": title,
+                "link": link,
+                "director": director,
+                "runtime": f"{runtime_min} min" if runtime_min else "",
+                "format": "DCP",
+                "time": ", ".join(sorted(time_set)),
+                "year": final_year,
+                "extra": "",
+            }
+        )
 
-                finally:
-                    perf_page.close()
-
-                # build output rows
-                for date_k, time_set in sorted(times_by_date.items()):
-                    rows.append(
-                        {
-                            "date": date_k,
-                            "venue": CINEMA_NAME,
-                            "title": title,
-                            "link": link,
-                            "director": director,
-                            "runtime": f"{runtime_min} min" if runtime_min else "",
-                            "format": "DCP",
-                            "time": ", ".join(sorted(time_set)),
-                            "year": final_year,
-                            "extra": "",
-                        }
-                    )
 
             page_number += 1
 
