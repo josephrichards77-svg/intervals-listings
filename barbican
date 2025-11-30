@@ -125,16 +125,18 @@ def scrape_barbican():
             if count == 0:
                 break
 
-            for i in range(count):
-                fd = films.nth(i)
+         for i in range(count):
+    fd = films.nth(i)
 
-                # title + link
-                link_rel = fd.locator("a.search-listing__link").first.get_attribute("href")
-                if not link_rel:
-                    continue
-                link = BASE_URL + link_rel
+    # title + link
+    link_rel = fd.locator("a.search-listing__link").first.get_attribute("href")
+    if not link_rel:
+        continue
+    link = BASE_URL + link_rel
 
-                title = fd.locator("h2.listing-title").first.text_content().strip()
+    title = fd.locator("h2.listing-title").first.text_content().strip()
+    print(f"[{i+1}/{count}] {title}")
+
 
                 # event ID
                 btn = fd.locator("button.saved-event-button").first
@@ -225,7 +227,7 @@ def scrape_barbican():
 # ============================================================
 
 def save_txt(rows):
-    timestamp = datetime.now().strftime(...)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     backup_path = BACKUP_DIR / f"barbican_{timestamp}.txt"
 
     # backup previous if exists
@@ -252,6 +254,7 @@ def save_txt(rows):
             )
 
     print(f"TXT saved to {TXT_OUTPUT_FILE}")
+
 
 
 # ============================================================
