@@ -1,12 +1,11 @@
 import os
-import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 
-import requests
 from playwright.sync_api import sync_playwright
+from tmdb_cache import tmdb_get_metadata
 
 # ============================================================
 # CONFIG
@@ -22,12 +21,6 @@ TXT_OUTPUT_FILE = "barbican_existing.txt"
 
 BACKUP_DIR = Path("backups/barbican")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-
-TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
-
-# Use your shared TMDB SQLite helpers
-from tmdb_cache import init_db, tmdb_get_metadata, RELEASE_YEAR_RE
-
 
 # ============================================================
 # HELPERS
@@ -113,10 +106,10 @@ def scrape_barbican():
 
         while True:
             url = f"{BASE_URL}/whats-on?af[16]=16&page={page_number}"
-            print(f"Loading page {page_number + 1}: {url}")
+            print(f"\nLoading page {page_number + 1}: {url}")
             page.goto(url, timeout=60000)
 
-            # end condition
+            # End condition
             if page.locator(".no-result-message").count() > 0:
                 break
 
@@ -125,98 +118,94 @@ def scrape_barbican():
             if count == 0:
                 break
 
-        for i in range(count):
-    fd = films.nth(i)
+            for i in range(count):
+                fd = films.nth(i)
 
-    # title + link
-    link_rel = fd.locator("a.search-listing__link").first.get_attribute("href")
-    if not link_rel:
-        continue
-    link = BASE_URL + link_rel
+                # title + link
+                link_rel = fd.locator("a.search-listing__link").first.get_attribute("href")
+                if not link_rel:
+                    continue
+                link = BASE_URL + link_rel
 
-    title = fd.locator("h2.listing-title").first.text_content().strip()
-    print(f"[{i+1}/{count}] {title}")
+                title = fd.locator("h2.listing-title").first.text_content().strip()
+                print(f"[{i+1}/{count}] {title}")
 
-    # event ID
-    btn = fd.locator("button.saved-event-button").first
-    event_id = btn.get_attribute("data-saved-event-id")
-    if not event_id:
-        continue
+                # event ID
+                btn = fd.locator("button.saved-event-button").first
+                event_id = btn.get_attribute("data-saved-event-id")
+                if not event_id:
+                    continue
 
-    # Barbican metadata
-    b_director, b_runtime, b_year = extract_barbican_metadata(browser, link)
+                # Barbican metadata
+                b_director, b_runtime, b_year = extract_barbican_metadata(browser, link)
 
-    director = b_director
-    runtime_min = b_runtime
-    year_hint = b_year
+                director = b_director
+                runtime_min = b_runtime
+                year_hint = b_year
 
-    # TMDB backup if missing
-    meta = tmdb_get_metadata(title, year_hint)
+                # TMDB backup if missing
+                meta = tmdb_get_metadata(title, year_hint)
 
-    director = director or meta.get("director") or ""
-    runtime_min = runtime_min or meta.get("runtime_min")
-    final_year = meta.get("year") or (year_hint or "")
+                director = director or meta.get("director") or ""
+                runtime_min = runtime_min or meta.get("runtime_min")
+                final_year = meta.get("year") or (year_hint or "")
 
-    # load performance times
-    perf_url = f"{BASE_URL}/whats-on/event/{event_id}/performances"
-    perf_page = browser.new_page()
+                # load performance times
+                perf_url = f"{BASE_URL}/whats-on/event/{event_id}/performances"
+                perf_page = browser.new_page()
 
-    times_by_date = defaultdict(set)
+                times_by_date = defaultdict(set)
 
-    try:
-        perf_page.goto(perf_url, timeout=60000)
-        t_elems = perf_page.locator("time")
-        t_count = t_elems.count()
+                try:
+                    perf_page.goto(perf_url, timeout=60000)
+                    t_elems = perf_page.locator("time")
+                    t_count = t_elems.count()
 
-        for j in range(t_count):
-            dt_attr = t_elems.nth(j).get_attribute("datetime")
-            if not dt_attr:
-                continue
+                    for j in range(t_count):
+                        dt_attr = t_elems.nth(j).get_attribute("datetime")
+                        if not dt_attr:
+                            continue
 
-            dt = datetime.fromisoformat(dt_attr)
-            dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
+                        dt = datetime.fromisoformat(dt_attr)
+                        dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
 
-            # incremental: skip past dates
-            if dt.date() < today:
-                continue
+                        if dt.date() < today:
+                            continue
 
-            # year rollover (Dec → Jan)
-            if dt.month == 1 and today.month == 12:
-                dt = dt.replace(year=today.year + 1)
+                        if dt.month == 1 and today.month == 12:
+                            dt = dt.replace(year=today.year + 1)
 
-            date_s = dt.date().strftime(DATE_FMT)
-            time_s = dt.strftime(TIME_FMT)
-            times_by_date[date_s].add(time_s)
+                        date_s = dt.date().strftime(DATE_FMT)
+                        time_s = dt.strftime(TIME_FMT)
+                        times_by_date[date_s].add(time_s)
 
-    except Exception as e:
-        print(f"[WARN] Could not read performances for {event_id}: {e}")
+                except Exception as e:
+                    print(f"[WARN] Could not read performances for {event_id}: {e}")
 
-    finally:
-        perf_page.close()
+                finally:
+                    perf_page.close()
 
-    # build output rows
-    for date_k, time_set in sorted(times_by_date.items()):
-        rows.append(
-            {
-                "date": date_k,
-                "venue": CINEMA_NAME,
-                "title": title,
-                "link": link,
-                "director": director,
-                "runtime": f"{runtime_min} min" if runtime_min else "",
-                "format": "DCP",
-                "time": ", ".join(sorted(time_set)),
-                "year": final_year,
-                "extra": "",
-            }
-        )
-
+                # build output rows
+                for date_k, time_set in sorted(times_by_date.items()):
+                    rows.append(
+                        {
+                            "date": date_k,
+                            "venue": CINEMA_NAME,
+                            "title": title,
+                            "link": link,
+                            "director": director,
+                            "runtime": f"{runtime_min} min" if runtime_min else "",
+                            "format": "DCP",
+                            "time": ", ".join(sorted(time_set)),
+                            "year": final_year,
+                            "extra": "",
+                        }
+                    )
 
             page_number += 1
 
         browser.close()
 
-    # sort rows
     rows.sort(key=lambda r: r["date"])
     return rows
 
@@ -229,7 +218,6 @@ def save_txt(rows):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     backup_path = BACKUP_DIR / f"barbican_{timestamp}.txt"
 
-    # backup previous if exists
     if os.path.exists(TXT_OUTPUT_FILE):
         try:
             os.replace(TXT_OUTPUT_FILE, backup_path)
@@ -237,7 +225,6 @@ def save_txt(rows):
         except Exception as e:
             print(f"[WARN] Could not create backup: {e}")
 
-    # write new txt
     with open(TXT_OUTPUT_FILE, "w", encoding="utf-8") as f:
         for s in rows:
             f.write(
@@ -252,8 +239,7 @@ def save_txt(rows):
                 f"{s['extra']}\n"
             )
 
-    print(f"TXT saved to {TXT_OUTPUT_FILE}")
-
+    print(f"\nTXT saved to {TXT_OUTPUT_FILE}")
 
 
 # ============================================================
