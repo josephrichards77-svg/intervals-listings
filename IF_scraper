@@ -160,7 +160,9 @@ def tmdb_lookup(title, year_hint=None):
     if not year_hint:
         close = [
             res for res in results
-            if SequenceMatcher(None, norm_query,
+            if SequenceMatcher(
+                None,
+                norm_query,
                 normalize_title_for_match(res.get("title", "") or "")
             ).ratio() > best_score - 0.03
         ]
@@ -239,7 +241,59 @@ def get_tmdb_metadata(raw_title, base_title, year_hint):
         "runtime": enriched.get("runtime"),
         "director": enriched.get("director"),
         "year_final": enriched.get("year_final") or enriched.get("tmdb_year"),
+        "tmdb_year": enriched.get("tmdb_year"),
     }
+
+
+# --------------------------------
+# WEBSITE-FIRST METADATA (NEW)
+# --------------------------------
+
+def extract_if_metadata(url: str) -> dict:
+    """
+    Scrape the Institut Français film page for:
+      - director
+      - runtime (minutes)
+      - year
+    TMDB will only be used if this fails or is incomplete.
+    """
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        r.raise_for_status()
+    except:
+        return {}
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    text = soup.get_text("\n", strip=True)
+
+    director = None
+    runtime = None
+    year_final = None
+
+    # Director(s): Lucile Hadžihalilović
+    m = re.search(r"Director\(s\):\s*([^\n]+)", text)
+    if m:
+        director = m.group(1).strip()
+
+    # Duration: 118 mins
+    m = re.search(r"Duration:\s*(\d+)\s*mins?", text, re.I)
+    if m:
+        runtime = m.group(1).strip()
+
+    # Country, year: FRA/GER | 2025
+    m = re.search(r"Country,\s*year:\s*[^\|]+\|\s*(\d{4})", text)
+    if m:
+        year_final = m.group(1)
+
+    out = {}
+    if director:
+        out["director"] = director
+    if runtime:
+        out["runtime"] = runtime  # just the minutes as string
+    if year_final:
+        out["year_final"] = year_final
+
+    return out
 
 
 # --------------------------------
@@ -482,15 +536,46 @@ def scrape_institut_francais():
     html = fetch_html()
     parsed = parse(html)
 
-    # TMDB ENRICH
+    # WEBSITE-FIRST ENRICHMENT (NEW)
+    meta_cache = {}
+
     for s in parsed:
-        info = get_tmdb_metadata(
-            s["title"],
-            s.get("tmdb_title_base") or s["title"],
-            s.get("year_guess")
-        )
-        if info:
-            s.update(info)
+        url = s["url"]
+
+        # 1) Grab metadata from Institut Français page
+        if url not in meta_cache:
+            meta_cache[url] = extract_if_metadata(url)
+
+        site_meta = meta_cache[url] or {}
+
+        if site_meta.get("director"):
+            s["director"] = site_meta["director"]
+        if site_meta.get("runtime"):
+            s["runtime"] = site_meta["runtime"]
+        if site_meta.get("year_final"):
+            s["year_final"] = site_meta["year_final"]
+
+        # 2) TMDB fallback ONLY if something is still missing
+        needs_tmdb = not (s.get("director") and s.get("runtime") and s.get("year_final"))
+
+        if needs_tmdb:
+            info = get_tmdb_metadata(
+                s["title"],
+                s.get("tmdb_title_base") or s["title"],
+                s.get("year_guess")
+            )
+            if info:
+                if info.get("director") and not s.get("director"):
+                    s["director"] = info["director"]
+                if info.get("runtime") and not s.get("runtime"):
+                    s["runtime"] = info["runtime"]
+                if info.get("year_final") and not s.get("year_final"):
+                    s["year_final"] = info["year_final"]
+                # keep tmdb_id / tmdb_year if needed later
+                if "tmdb_id" in info:
+                    s["tmdb_id"] = info["tmdb_id"]
+                if "tmdb_year" in info:
+                    s["tmdb_year"] = info["tmdb_year"]
 
     old = load_saved()
     merged = merge_incremental(old, parsed)
