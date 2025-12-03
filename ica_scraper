@@ -1,0 +1,202 @@
+# ============================================================
+# ICA SCRAPER — CLEAN UPGRADE (NO CORE LOGIC CHANGED)
+# ============================================================
+
+import os
+import time
+import datetime
+import re
+from pathlib import Path
+import sqlite3
+
+import requests
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
+
+from tmdb_cache import tmdb_get_metadata   # Unified metadata source
+
+BASE = "https://www.ica.art"
+CINEMA_NAME = "The ICA"
+
+# Output + backups
+TXT_OUTPUT_FILE = "ica_existing.txt"
+BACKUP_DIR = Path("backups/ica")
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ============================================================
+# BASIC UTILITIES
+# ============================================================
+
+def clean_text(s):
+    if not s:
+        return ""
+    return " ".join(s.replace("\n", " ").split())
+
+
+# ============================================================
+# TITLE BLOCK HELPERS
+# ============================================================
+
+def extract_season(title_block):
+    if title_block is None:
+        return ""
+    season_div = title_block.find("div", class_="title season-item")
+    if season_div:
+        return clean_text(season_div.get_text())
+    return ""
+
+
+def extract_title(title_block):
+    if title_block is None:
+        return ""
+    parts = []
+    for div in title_block.find_all("div", class_="title"):
+        if "season-item" in div.get("class", []):
+            continue
+        parts.append(clean_text(div.get_text()))
+    return " ".join([p for p in parts if p])
+
+
+def extract_times(item):
+    tdiv = item.find("div", class_="time-container")
+    if not tdiv:
+        return ""
+    return ",".join(clean_text(t.get_text()) for t in tdiv.find_all("div", class_="time-slot"))
+
+
+def extract_format():
+    return "DCP"
+
+
+# ============================================================
+# SCRAPE ONE DAY
+# ============================================================
+
+def scrape_day(date_str, page, results):
+    url = f"{BASE}/{date_str}"
+    print(f"Scraping {url}")
+
+    try:
+        page.goto(url, timeout=20000)
+    except:
+        print(" → page load failed")
+        return False
+
+    soup = BeautifulSoup(page.content(), "html.parser")
+    items = soup.select(".item.films a")
+
+    if not items:
+        print(" → No films listed this day")
+        return False
+
+    for a in items:
+        href = a.get("href")
+
+        # Skip ICA dummy /films link + blanks
+        if not href or href.strip() == "/films":
+            continue
+
+        full_url = BASE + href
+
+        # Title block
+        title_block = a.find("div", class_="title-container")
+        if title_block is None:
+            continue
+
+        season = extract_season(title_block)
+        title = extract_title(title_block)
+        if not title.strip():
+            continue
+
+        # Times
+        times = extract_times(a)
+
+        # TMDB metadata (safe lookup)
+        meta = tmdb_get_metadata(title)
+        director = meta.get("director", "") or ""
+        runtime = meta.get("runtime_min", "") or ""
+        year = meta.get("year", "") or ""
+
+        fmt = extract_format()
+
+        # Clickable title
+        title_html = f'<a href="{full_url}" target="_blank">{title}</a>'
+
+        # Row format (semicolon)
+        line = (
+            f"{date_str};"
+            f"{CINEMA_NAME};"
+            f"{title_html};"
+            f"{director};"
+            f"{runtime};"
+            f"{fmt};"
+            f"{times};"
+            f"{year};"
+            f"{season}"
+        )
+
+        results.append(line)
+
+    return True
+
+
+# ============================================================
+# MAIN SCRAPER LOOP
+# ============================================================
+
+def run():
+    results = []
+
+    start = datetime.date.today()
+    max_days = 120
+    empty_days = 0
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+
+        for i in range(max_days):
+            day = start + datetime.timedelta(days=i)
+            date_str = day.isoformat()
+
+            found = scrape_day(date_str, page, results)
+
+            if not found:
+                empty_days += 1
+            else:
+                empty_days = 0
+
+            if empty_days >= 2:
+                print("Stopping search (2 consecutive empty days).")
+                break
+
+            time.sleep(0.25)
+
+        browser.close()
+
+    # Remove past screenings (incremental mode)
+    today = datetime.date.today()
+    filtered = [r for r in results if r.split(";")[0] >= today.isoformat()]
+
+    # Save with backup
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup_path = BACKUP_DIR / f"ica_{timestamp}.txt"
+
+    if os.path.exists(TXT_OUTPUT_FILE):
+        os.replace(TXT_OUTPUT_FILE, backup_path)
+        print(f"Backup created → {backup_path}")
+
+    with open(TXT_OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for r in filtered:
+            f.write(r + "\n")
+
+    print(f"DONE → wrote {len(filtered)} rows to {TXT_OUTPUT_FILE}")
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+    run()
