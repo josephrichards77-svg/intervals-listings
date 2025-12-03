@@ -92,46 +92,56 @@ def scrape_garden():
             runtime_min = tmdb_meta["runtime_min"] or ""
             year = tmdb_meta["year"] or ""
 
-            for j in range(panel_count):
-                panel = panels.nth(j)
+        last_date_obj = None
 
-                # Date
-                date_str = panel.locator(".screening-panel__date-title").inner_text().strip()
-                date_obj = dateparser.parse(date_str)
-                if not date_obj:
-                    continue
-                date = date_obj.date()
+for j in range(panel_count):
+    panel = panels.nth(j)
 
-                # Skip past dates
-                if date < today:
-                    continue
+    # Try to get date
+    date_loc = panel.locator(".screening-panel__date-title")
+    if date_loc.count() > 0:
+        # New date header found
+        date_str = date_loc.inner_text().strip()
+        date_obj = dateparser.parse(date_str)
+        if not date_obj:
+            continue
+        last_date_obj = date_obj.date()
+    else:
+        # No date found in this panel — use previous date
+        if not last_date_obj:
+            continue  # cannot assign a date
+        date_obj = last_date_obj
 
-                # Times inside the panel
-                time_links = panel.locator(".screening-time a.screening")
-                tc = time_links.count()
+    # Skip past dates
+    if date_obj < today:
+        continue
 
-                for k in range(tc):
-                    time_str = time_links.nth(k).inner_text().strip()
+    # All time links within this panel
+    time_links = panel.locator(".screening-time a.screening")
+    tc = time_links.count()
 
-                    dt = datetime.datetime.combine(
-                        date,
-                        datetime.datetime.strptime(time_str, "%H:%M").time()
-                    )
-                    dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
+    for k in range(tc):
+        time_str = time_links.nth(k).inner_text().strip()
 
-                    # Build a row
-                    rows.append({
-                        "date": dt.date().strftime(DATE_FMT),
-                        "venue": CINEMA_NAME,
-                        "title": title,
-                        "link": link,
-                        "director": director,
-                        "runtime": f"{runtime_min} min" if runtime_min else "",
-                        "format": "DCP",
-                        "time": time_str,
-                        "year": year,
-                        "extra": season,
-                    })
+        dt = datetime.datetime.combine(
+            date_obj,
+            datetime.datetime.strptime(time_str, "%H:%M").time()
+        )
+        dt = dt.astimezone(ZoneInfo("Europe/London")).replace(tzinfo=None)
+
+        rows.append({
+            "date": dt.date().strftime(DATE_FMT),
+            "venue": CINEMA_NAME,
+            "title": title,
+            "link": link,
+            "director": director,
+            "runtime": f"{runtime_min} min" if runtime_min else "",
+            "format": "DCP",
+            "time": time_str,
+            "year": year,
+            "extra": season,
+        })
+
 
             fp.close()
 
