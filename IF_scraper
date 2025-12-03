@@ -1,0 +1,506 @@
+import requests
+import json
+import os
+import re
+import sqlite3
+from datetime import datetime
+from difflib import SequenceMatcher
+from urllib.parse import quote
+from bs4 import BeautifulSoup
+from collections import defaultdict
+
+# --------------------------------
+# CONFIG
+# --------------------------------
+
+SAVOY_URL = (
+    "https://cinelumiere.savoysystems.co.uk/"
+    "CineLumiere.dll/TSelectItems.waSelectItemsPrompt.TcsWebMenuItem_600.TcsWebTab_601"
+)
+
+DATA_FILE = "data_institut_francais.json"
+OUTPUT_FILE = "institut_francais.txt"
+CACHE_DB = "tmdb_cache.db"
+
+TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
+TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
+
+
+# --------------------------------
+# NORMALISATION HELPERS
+# --------------------------------
+
+def normalize_title_for_match(title: str) -> str:
+    t = title.lower()
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def clean_base_title_for_tmdb(title_raw: str) -> str:
+    t = re.split(r"\s*\(Cert.*", title_raw)[0]
+    t = re.sub(r"\s+FFF\b", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+\+\s*(Q&A|intro.*|introduction.*)$", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\s+(part\s*[12]|p[12])$", "", t, flags=re.IGNORECASE)
+    return t.strip()
+
+
+def extract_year(*texts):
+    for text in texts:
+        if not text:
+            continue
+        m = re.search(r"\((19|20)\d{2}\)", text)
+        if m:
+            return m.group(0).strip("()")
+        m2 = re.search(r"\b(19|20)\d{2}\b", text)
+        if m2:
+            return m2.group(0)
+    return None
+
+
+def make_institut_url(display_title: str) -> str:
+    slug = display_title.lower()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"\s+", "-", slug).strip("-")
+    return f"https://www.institut-francais.org.uk/cinema/{quote(slug)}/"
+
+
+# --------------------------------
+# TMDB CACHE FUNCTIONS
+# --------------------------------
+
+def cache_lookup(title, year_hint):
+    conn = sqlite3.connect(CACHE_DB)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT tmdb_id, runtime_min, director, final_year
+        FROM tmdb_cache
+        WHERE title = ? AND (year_hint = ? OR (year_hint IS NULL AND ? IS NULL))
+    """, (title, year_hint, year_hint))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    tmdb_id, runtime_min, director, final_year = row
+    return {
+        "tmdb_id": tmdb_id,
+        "runtime": runtime_min,
+        "director": director,
+        "year_final": final_year,
+    }
+
+
+def cache_store(title, year_hint, tmdb_id, runtime_min, director, final_year):
+    conn = sqlite3.connect(CACHE_DB)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO tmdb_cache
+        (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        title,
+        year_hint,
+        tmdb_id,
+        runtime_min,
+        director,
+        final_year,
+        datetime.utcnow().isoformat()
+    ))
+    conn.commit()
+    conn.close()
+
+
+# --------------------------------
+# TMDB LOOKUP + ENRICH
+# --------------------------------
+
+def tmdb_lookup(title, year_hint=None):
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": title,
+        "include_adult": "false",
+    }
+    if year_hint:
+        params["year"] = year_hint
+
+    try:
+        r = requests.get(TMDB_SEARCH_URL, params=params, timeout=10)
+        r.raise_for_status()
+    except:
+        return None
+
+    results = r.json().get("results", [])
+    if not results:
+        return None
+
+    norm_query = normalize_title_for_match(title)
+
+    best = None
+    best_score = 0.0
+
+    for res in results:
+        tmdb_title = res.get("title", "") or ""
+        norm_tmdb = normalize_title_for_match(tmdb_title)
+        score = SequenceMatcher(None, norm_query, norm_tmdb).ratio()
+
+        release_year = (res.get("release_date") or "")[:4]
+        if year_hint and release_year and release_year != str(year_hint):
+            continue
+
+        if score > best_score:
+            best_score = score
+            best = res
+
+    if not best or best_score < 0.78:
+        return None
+
+    # ambiguity if year not given
+    if not year_hint:
+        close = [
+            res for res in results
+            if SequenceMatcher(None, norm_query,
+                normalize_title_for_match(res.get("title", "") or "")
+            ).ratio() > best_score - 0.03
+        ]
+        if len(close) > 1:
+            return None
+
+    return {
+        "tmdb_id": best.get("id"),
+        "tmdb_title": best.get("title"),
+        "tmdb_year": (best.get("release_date") or "")[:4],
+    }
+
+
+def tmdb_enrich(info):
+    tmdb_id = info.get("tmdb_id")
+    if not tmdb_id:
+        return info
+
+    enriched = dict(info)
+
+    # DETAILS
+    try:
+        r = requests.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+            params={"api_key": TMDB_API_KEY},
+            timeout=10
+        )
+        d = r.json()
+        enriched["runtime"] = d.get("runtime")
+        enriched["year_final"] = (d.get("release_date") or "")[:4]
+    except:
+        pass
+
+    # CREDITS
+    try:
+        r = requests.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
+            params={"api_key": TMDB_API_KEY},
+            timeout=10
+        )
+        crew = r.json().get("crew", [])
+        dirs = [c["name"] for c in crew if c.get("job") == "Director"]
+        if dirs:
+            enriched["director"] = ", ".join(dirs)
+    except:
+        pass
+
+    return enriched
+
+
+def get_tmdb_metadata(raw_title, base_title, year_hint):
+    cached = cache_lookup(base_title, year_hint)
+    if cached:
+        return cached
+
+    search = tmdb_lookup(base_title, year_hint)
+    if not search and raw_title != base_title:
+        search = tmdb_lookup(raw_title, year_hint)
+
+    if not search:
+        return None
+
+    enriched = tmdb_enrich(search)
+
+    cache_store(
+        base_title,
+        year_hint,
+        enriched.get("tmdb_id"),
+        enriched.get("runtime"),
+        enriched.get("director"),
+        enriched.get("year_final") or enriched.get("tmdb_year")
+    )
+
+    return {
+        "tmdb_id": enriched.get("tmdb_id"),
+        "runtime": enriched.get("runtime"),
+        "director": enriched.get("director"),
+        "year_final": enriched.get("year_final") or enriched.get("tmdb_year"),
+    }
+
+
+# --------------------------------
+# FETCH + PARSE SAVOY HTML
+# --------------------------------
+
+def fetch_html():
+    try:
+        r = requests.get(SAVOY_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        r.raise_for_status()
+        return r.text
+    except:
+        return ""
+
+
+DATE_RE = re.compile(r"([A-Za-z]+ \d{1,2} [A-Za-z]{3} \d{4})")
+TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
+
+
+def extract_date_times(block):
+    text = block.get_text(" ", strip=True)
+    m = DATE_RE.search(text)
+    if not m:
+        return []
+
+    date_str = m.group(1)
+    for fmt in ("%A %d %b %Y", "%a %d %b %Y"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            break
+        except:
+            dt = None
+    if not dt:
+        return []
+
+    times = []
+    for a in block.find_all("a"):
+        t = a.get_text(strip=True)
+        if TIME_RE.match(t):
+            times.append(t)
+
+    return [(dt.strftime("%Y-%m-%d"), t) for t in times]
+
+
+def parse(html):
+    screenings = []
+    if not html:
+        return screenings
+
+    soup = BeautifulSoup(html, "html.parser")
+    headings = soup.find_all("h2")
+
+    for h in headings:
+        a = h.find("a")
+        if not a or "TSelectItems" not in (a.get("href") or ""):
+            continue
+
+        title_raw = h.get_text(" ", strip=True)
+        display_title = re.split(r"\s*\(Cert.*", title_raw)[0].strip()
+
+        base_title = clean_base_title_for_tmdb(display_title)
+        if not base_title:
+            continue
+
+        url = make_institut_url(display_title)
+        year_guess = extract_year(title_raw)
+        season = "French Film Festival London" if "FFF" in title_raw else ""
+
+        sib = h.next_sibling
+        while sib and getattr(sib, "name", None) not in ("h1", "h2", "h3"):
+            if getattr(sib, "name", None) in ("p", "div", "li", "span"):
+                for date_str, time_str in extract_date_times(sib):
+                    screenings.append({
+                        "title": display_title,
+                        "tmdb_title_base": base_title,
+                        "date": date_str,
+                        "time": time_str,
+                        "url": url,
+                        "venue": "Institut français",
+                        "year_guess": year_guess,
+                        "season": season,
+                        "director": "",
+                        "runtime": "",
+                        "format": "Digital",
+                    })
+            sib = sib.next_sibling
+
+    return screenings
+
+
+# --------------------------------
+# INCREMENTAL STORAGE
+# --------------------------------
+
+def load_saved():
+    if not os.path.exists(DATA_FILE):
+        return []
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def merge_incremental(old, new):
+    merged = {
+        f"{x['title']}|{x['date']}|{x['time']}|{x['venue']}": x
+        for x in old
+    }
+    for s in new:
+        key = f"{s['title']}|{s['date']}|{s['time']}|{s['venue']}"
+        merged[key] = s
+    return list(merged.values())
+
+
+# --------------------------------
+# FFF DEDUPE
+# --------------------------------
+
+def dedupe_fff(screenings):
+    groups = defaultdict(list)
+
+    for s in screenings:
+        base = re.sub(r"\s+FFF$", "", s["title"]).strip()
+        groups[(s["date"], s["time"], base.lower())].append(s)
+
+    out = []
+
+    for key, items in groups.items():
+        normals = [i for i in items if not i["title"].endswith("FFF")]
+        fffs = [i for i in items if i["title"].endswith("FFF")]
+
+        if normals:
+            s = normals[0]
+            if fffs:
+                s["season"] = "French Film Festival London"
+            out.append(s)
+        else:
+            s = fffs[0]
+            s["title"] = re.sub(r"\s+FFF$", "", s["title"]).strip()
+            s["season"] = "French Film Festival London"
+            out.append(s)
+
+    return out
+
+
+# --------------------------------
+# EXPORT — ONE ROW PER FILM PER DAY
+# --------------------------------
+
+def export_txt(data, path=OUTPUT_FILE):
+
+    # add resolved year_first
+    enriched = []
+    for s in data:
+        year_final = (
+            s.get("year_final") or
+            s.get("tmdb_year") or
+            s.get("year_guess") or
+            ""
+        )
+        enriched.append({**s, "year_final": year_final})
+
+    # correct grouping key — *ONE FILM PER DAY*
+    grouped = {}
+
+    for s in enriched:
+        film_id = s.get("tmdb_title_base") or s["title"]
+
+        key = (
+            s["date"],
+            film_id.lower().strip(),
+            s["venue"],
+            s.get("director", ""),
+            s.get("runtime", ""),
+            s.get("format", ""),
+            s.get("year_final", ""),
+            s.get("season", ""),
+        )
+
+        if key not in grouped:
+            grouped[key] = {
+                "date": s["date"],
+                "title": s["title"],
+                "venue": s["venue"],
+                "director": s.get("director", ""),
+                "runtime": s.get("runtime", ""),
+                "format": s.get("format", ""),
+                "year_final": s.get("year_final", ""),
+                "season": s.get("season", ""),
+                "url": s["url"],
+                "times": [],
+            }
+
+        grouped[key]["times"].append(s["time"])
+
+    # sorting
+    def key_sort(g):
+        first_time = sorted(g["times"])[0]
+        return (g["date"], first_time, g["title"])
+
+    final = sorted(grouped.values(), key=key_sort)
+
+    rows = []
+
+    for g in final:
+        times = sorted(set(g["times"]))
+        time_str = ", ".join(times)
+
+        href = f'<a href="{g["url"]}" target="_blank">{g["title"]}</a>'
+
+        rows.append(
+            f'{g["date"]} ; '
+            f'{g["venue"]} ; '
+            f'{href} ; '
+            f'{g["director"]} ; '
+            f'{g["runtime"]} ; '
+            f'{g["format"]} ; '
+            f'{time_str} ; '
+            f'{g["year_final"]} ; '
+            f'{g["season"]}'
+        )
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(rows))
+
+    print(f"Saved semicolon export → {path}")
+
+
+# --------------------------------
+# MAIN
+# --------------------------------
+
+def scrape_institut_francais():
+    html = fetch_html()
+    parsed = parse(html)
+
+    # TMDB ENRICH
+    for s in parsed:
+        info = get_tmdb_metadata(
+            s["title"],
+            s.get("tmdb_title_base") or s["title"],
+            s.get("year_guess")
+        )
+        if info:
+            s.update(info)
+
+    old = load_saved()
+    merged = merge_incremental(old, parsed)
+    save_data(merged)
+
+    cleaned = dedupe_fff(merged)
+
+    export_txt(cleaned)
+    return cleaned
+
+
+if __name__ == "__main__":
+    scrape_institut_francais()
