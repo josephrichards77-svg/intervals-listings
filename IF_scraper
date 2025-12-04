@@ -1,13 +1,10 @@
 import requests
-import json
-import os
-import re
-import sqlite3
-from datetime import datetime
-from urllib.parse import quote
 from bs4 import BeautifulSoup
-from collections import defaultdict
+from datetime import datetime
+import sqlite3
+import re
 from difflib import SequenceMatcher
+from urllib.parse import quote
 
 # --------------------------------
 # CONFIG
@@ -18,17 +15,29 @@ SAVOY_URL = (
     "CineLumiere.dll/TSelectItems.waSelectItemsPrompt.TcsWebMenuItem_600.TcsWebTab_601"
 )
 
-DATA_FILE = "data_institut_francais.json"
 OUTPUT_FILE = "institut_francais.txt"
 CACHE_DB = "tmdb_cache.db"
-
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
-TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 
 
-# --------------------------------
-# TITLE CLEANERS
-# --------------------------------
+# ============================================================
+# CLEANER — Fix capitalised titles
+# ============================================================
+
+def fix_title_caps(s):
+    """
+    Convert SHOUTING TITLES → Title Case, but keep known acronyms.
+    """
+    if not s:
+        return s
+    if s.isupper():
+        return s.title()  # simple use-case works well here
+    return s
+
+
+# ============================================================
+# TMDB HELPERS
+# ============================================================
 
 def normalize_title_for_match(title: str) -> str:
     t = title.lower()
@@ -45,30 +54,6 @@ def clean_base_title_for_tmdb(title_raw: str) -> str:
     return t.strip()
 
 
-def extract_year(*texts):
-    for text in texts:
-        if not text:
-            continue
-        m = re.search(r"\((19|20)\d{2}\)", text)
-        if m:
-            return m.group(0).strip("()")
-        m2 = re.search(r"\b(19|20)\d{2}\b", text)
-        if m2:
-            return m2.group(0)
-    return None
-
-
-def make_institut_url(display_title: str) -> str:
-    slug = display_title.lower()
-    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
-    slug = re.sub(r"\s+", "-", slug).strip("-")
-    return f"https://www.institut-francais.org.uk/cinema/{quote(slug)}/"
-
-
-# --------------------------------
-# TMDB CACHE
-# --------------------------------
-
 def cache_lookup(title, year_hint):
     conn = sqlite3.connect(CACHE_DB)
     cur = conn.cursor()
@@ -76,7 +61,7 @@ def cache_lookup(title, year_hint):
         SELECT tmdb_id, runtime_min, director, final_year
         FROM tmdb_cache
         WHERE title = ? AND (year_hint = ? OR (year_hint IS NULL AND ? IS NULL))
-    """, (title, year_hint, year_hint))
+    """, (title.lower(), year_hint, year_hint))
     row = cur.fetchone()
     conn.close()
 
@@ -100,7 +85,7 @@ def cache_store(title, year_hint, tmdb_id, runtime_min, director, final_year):
         (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
-        title,
+        title.lower(),
         year_hint,
         tmdb_id,
         runtime_min,
@@ -112,10 +97,6 @@ def cache_store(title, year_hint, tmdb_id, runtime_min, director, final_year):
     conn.close()
 
 
-# --------------------------------
-# TMDB LOOKUP + ENRICHMENT
-# --------------------------------
-
 def tmdb_lookup(title, year_hint=None):
     params = {
         "api_key": TMDB_API_KEY,
@@ -126,7 +107,7 @@ def tmdb_lookup(title, year_hint=None):
         params["year"] = year_hint
 
     try:
-        r = requests.get(TMDB_SEARCH_URL, params=params, timeout=10)
+        r = requests.get("https://api.themoviedb.org/3/search/movie", params=params, timeout=10)
         r.raise_for_status()
     except:
         return None
@@ -145,27 +126,12 @@ def tmdb_lookup(title, year_hint=None):
         norm_tmdb = normalize_title_for_match(tmdb_title)
         score = SequenceMatcher(None, norm_query, norm_tmdb).ratio()
 
-        release_year = (res.get("release_date") or "")[:4]
-        if year_hint and release_year and release_year != str(year_hint):
-            continue
-
         if score > best_score:
             best_score = score
             best = res
 
     if not best or best_score < 0.78:
         return None
-
-    # Ambiguity check
-    if not year_hint:
-        close = [
-            res for res in results
-            if SequenceMatcher(None, norm_query,
-                normalize_title_for_match(res.get("title", "") or "")
-            ).ratio() > best_score - 0.03
-        ]
-        if len(close) > 1:
-            return None
 
     return {
         "tmdb_id": best.get("id"),
@@ -185,7 +151,7 @@ def tmdb_enrich(info):
     try:
         r = requests.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-            params={"api_key": TMDB_API_KEY},
+            params={"api_key": TMDB_API_KEY, "append_to_response": "credits"},
             timeout=10
         )
         d = r.json()
@@ -194,14 +160,9 @@ def tmdb_enrich(info):
     except:
         pass
 
-    # CREDITS
+    # DIRECTOR
     try:
-        r = requests.get(
-            f"https://api.themovieddb.org/3/movie/{tmdb_id}/credits",
-            params={"api_key": TMDB_API_KEY},
-            timeout=10
-        )
-        crew = r.json().get("crew", [])
+        crew = r.json().get("credits", {}).get("crew", [])
         dirs = [c["name"] for c in crew if c.get("job") == "Director"]
         if dirs:
             enriched["director"] = ", ".join(dirs)
@@ -212,10 +173,12 @@ def tmdb_enrich(info):
 
 
 def get_tmdb_metadata(raw_title, base_title, year_hint):
+    # 1. cache
     cached = cache_lookup(base_title, year_hint)
     if cached:
         return cached
 
+    # 2. TMDB search
     search = tmdb_lookup(base_title, year_hint)
     if not search and raw_title != base_title:
         search = tmdb_lookup(raw_title, year_hint)
@@ -225,6 +188,7 @@ def get_tmdb_metadata(raw_title, base_title, year_hint):
 
     enriched = tmdb_enrich(search)
 
+    # store
     cache_store(
         base_title,
         year_hint,
@@ -242,270 +206,135 @@ def get_tmdb_metadata(raw_title, base_title, year_hint):
     }
 
 
-# --------------------------------
-# FETCH SAVOY LISTING PAGE
-# --------------------------------
+# ============================================================
+# SCRAPER — NEW CORRECT VERSION
+# ============================================================
 
-def fetch_html():
+def fetch_film_page(url):
     try:
-        r = requests.get(SAVOY_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        r = requests.get(url, timeout=15)
         r.raise_for_status()
         return r.text
     except:
         return ""
 
 
-DATE_RE = re.compile(r"([A-Za-z]+ \d{1,2} [A-Za-z]{3} \d{4})")
-TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
-
-
-def extract_date_times(block):
-    """Extract (date, time) pairs from SavoySystems blocks."""
-    text = block.get_text(" ", strip=True)
-    m = DATE_RE.search(text)
-    if not m:
-        return []
-
-    date_str = m.group(1)
-
-    for fmt in ("%A %d %b %Y", "%a %d %b %Y"):
-        try:
-            dt = datetime.strptime(date_str, fmt)
-            break
-        except:
-            dt = None
-
-    if not dt:
-        return []
-
-    times = []
-    for a in block.find_all("a"):
-        t = a.get_text(strip=True)
-        if TIME_RE.match(t):
-            times.append(t)
-
-    return [(dt.strftime("%Y-%m-%d"), t) for t in times]
-
-
-# --------------------------------
-# PARSE THE PAGE
-# --------------------------------
-
-def parse(html):
-    screenings = []
+def extract_screenings_from_film(url):
+    """
+    Reads all <tr> rows at bottom of film page.
+    Extracts correct per-row date + time.
+    """
+    html = fetch_film_page(url)
     if not html:
-        return screenings
+        return []
 
     soup = BeautifulSoup(html, "html.parser")
-    headings = soup.find_all("h2")
 
-    for h in headings:
-        a = h.find("a")
-        if not a or "TSelectItems" not in (a.get("href") or ""):
+    rows = soup.select("table tr")
+    screenings = []
+
+    for tr in rows:
+        date_el = tr.select_one("time.date")
+        time_el = tr.select_one("time.time")
+
+        if not date_el or not time_el:
             continue
 
-        title_raw = h.get_text(" ", strip=True)
-        display_title = re.split(r"\s*\(Cert.*", title_raw)[0].strip()
+        date_iso = date_el.get("datetime") or ""
+        time_iso = time_el.get("datetime") or ""
 
-        base_title = clean_base_title_for_tmdb(display_title)
-        if not base_title:
+        if not date_iso or not time_iso:
             continue
 
-        url = make_institut_url(display_title)
-        year_guess = extract_year(title_raw)
-        season = "French Film Festival London" if "FFF" in title_raw else ""
+        date_str = date_iso.split("T")[0]
+        time_str = time_el.text.strip()
 
-        # Crawl forward until next heading
-        sib = h.next_sibling
-        while sib and getattr(sib, "name", None) not in ("h1", "h2", "h3"):
-            if getattr(sib, "name", None) in ("p", "div", "li", "span"):
-                for date_str, time_str in extract_date_times(sib):
-                    screenings.append({
-                        "title": display_title,
-                        "tmdb_title_base": base_title,
-                        "date": date_str,
-                        "time": time_str,
-                        "url": url,
-                        "venue": "Institut français",
-                        "year_guess": year_guess,
-                        "season": season,
-                        "director": "",
-                        "runtime": "",
-                        "format": "Digital",
-                    })
-            sib = sib.next_sibling
+        screenings.append((date_str, time_str))
 
     return screenings
 
 
-# --------------------------------
-# INCREMENTAL STORAGE
-# --------------------------------
-
-def load_saved():
-    if not os.path.exists(DATA_FILE):
-        return []
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return []
-
-
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def merge_incremental(old, new):
-    merged = {
-        f"{x['title']}|{x['date']}|{x['time']}|{x['venue']}": x
-        for x in old
-    }
-    for s in new:
-        key = f"{s['title']}|{s['date']}|{s['time']}|{s['venue']}"
-        merged[key] = s
-    return list(merged.values())
-
-
-# --------------------------------
-# FFF DEDUPING
-# --------------------------------
-
-def dedupe_fff(screenings):
-    groups = defaultdict(list)
-
-    for s in screenings:
-        base = re.sub(r"\s+FFF$", "", s["title"]).strip()
-        groups[(s["date"], s["time"], base.lower())].append(s)
-
-    out = []
-
-    for key, items in groups.items():
-        normals = [i for i in items if not i["title"].endswith("FFF")]
-        fffs = [i for i in items if i["title"].endswith("FFF")]
-
-        if normals:
-            s = normals[0]
-            if fffs:
-                s["season"] = "French Film Festival London"
-            out.append(s)
-        else:
-            s = fffs[0]
-            s["title"] = re.sub(r"\s+FFF$", "", s["title"]).strip()
-            s["season"] = "French Film Festival London"
-            out.append(s)
-
-    return out
-
-
-# --------------------------------
-# EXPORT ONE ROW PER FILM PER DAY
-# --------------------------------
-
-def export_txt(data, path=OUTPUT_FILE):
-    enriched = []
-
-    for s in data:
-        year_final = (
-            s.get("year_final") or
-            s.get("tmdb_year") or
-            s.get("year_guess") or
-            ""
-        )
-        enriched.append({**s, "year_final": year_final})
-
-    grouped = {}
-
-    for s in enriched:
-        film_id = s.get("tmdb_title_base") or s["title"]
-
-        key = (
-            s["date"],
-            film_id.lower().strip(),
-            s["venue"],
-            s.get("director", ""),
-            s.get("runtime", ""),
-            s.get("format", ""),
-            s.get("year_final", ""),
-            s.get("season", ""),
-        )
-
-        if key not in grouped:
-            grouped[key] = {
-                "date": s["date"],
-                "title": s["title"],
-                "venue": s["venue"],
-                "director": s.get("director", ""),
-                "runtime": s.get("runtime", ""),
-                "format": s.get("format", ""),
-                "year_final": s.get("year_final", ""),
-                "season": s.get("season", ""),
-                "url": s["url"],
-                "times": [],
-            }
-
-        grouped[key]["times"].append(s["time"])
-
-    def key_sort(g):
-        first_time = sorted(g["times"])[0]
-        return (g["date"], first_time, g["title"])
-
-    final = sorted(grouped.values(), key=key_sort)
-
-    rows = []
-
-    for g in final:
-        times = sorted(set(g["times"]))
-        time_str = ", ".join(times)
-
-        href = f'<a href="{g["url"]}" target="_blank">{g["title"]}</a>'
-
-        rows.append(
-            f'{g["date"]} ; '
-            f'{g["venue"]} ; '
-            f'{href} ; '
-            f'{g["director"]} ; '
-            f'{g["runtime"]} ; '
-            f'{g["format"]} ; '
-            f'{time_str} ; '
-            f'{g["year_final"]} ; '
-            f'{g["season"]}'
-        )
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(rows))
-
-    print(f"Saved semicolon export → {path}")
-
-
-# --------------------------------
-# MAIN
-# --------------------------------
-
-def scrape_institut_francais():
+def scrape():
     html = fetch_html()
-    parsed = parse(html)
+    if not html:
+        print("Could not fetch Savoy HTML.")
+        return []
 
-    # TMDB ENRICH
-    for s in parsed:
-        info = get_tmdb_metadata(
-            s["title"],
-            s.get("tmdb_title_base") or s["title"],
-            s.get("year_guess")
-        )
-        if info:
-            s.update(info)
+    soup = BeautifulSoup(html, "html.parser")
+    headings = soup.find_all("h2")
 
-    old = load_saved()
-    merged = merge_incremental(old, parsed)
-    save_data(merged)
+    results = []
 
-    cleaned = dedupe_fff(merged)
+    for h in headings:
+        a = h.find("a")
+        if not a or not a.get("href"):
+            continue
 
-    export_txt(cleaned)
-    return cleaned
+        title_raw = h.get_text(" ", strip=True)
+        display_title = re.split(r"\s*\(Cert", title_raw)[0].strip()
 
+        display_title = fix_title_caps(display_title)
+
+        base_title = clean_base_title_for_tmdb(display_title)
+
+        film_url = f"https://www.institut-francais.org.uk/cinema/{quote(base_title.lower().replace(' ', '-'))}/"
+
+        year_guess = re.search(r"(\d{4})", title_raw)
+        year_hint = year_guess.group(1) if year_guess else None
+
+        # Website first — correct dates + times
+        screenings = extract_screenings_from_film(film_url)
+
+        # TMDB fallback
+        meta = get_tmdb_metadata(display_title, base_title, year_hint) or {}
+
+        director = meta.get("director", "")
+        runtime = meta.get("runtime", "")
+        year_final = meta.get("year_final", year_hint or "")
+
+        for date_str, time_str in screenings:
+            results.append({
+                "date": date_str,
+                "venue": "Institut français",
+                "title": display_title,
+                "director": director,
+                "runtime": runtime,
+                "format": "Digital",
+                "time": time_str,
+                "year": year_final,
+                "url": film_url,
+                "season": "",
+            })
+
+    return results
+
+
+# ------------------------------------------------------------
+# OUTPUT
+# ------------------------------------------------------------
+
+def export_txt(rows):
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        for r in rows:
+            href = f'<a href="{r["url"]}" target="_blank">{r["title"]}</a>'
+            f.write(
+                f"{r['date']};"
+                f"{r['venue']};"
+                f"{href};"
+                f"{r['director']};"
+                f"{r['runtime']};"
+                f"{r['format']};"
+                f"{r['time']};"
+                f"{r['year']};"
+                f"{r['season']}\n"
+            )
+    print(f"Saved {len(rows)} rows → {OUTPUT_FILE}")
+
+
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
 
 if __name__ == "__main__":
-    scrape_institut_francais()
+    rows = scrape()
+    export_txt(rows)
