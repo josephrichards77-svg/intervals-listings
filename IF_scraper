@@ -7,15 +7,15 @@ from datetime import datetime
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from collections import defaultdict
+from difflib import SequenceMatcher
 
-# ============================================================
+# --------------------------------
 # CONFIG
-# ============================================================
+# --------------------------------
 
 SAVOY_URL = (
     "https://cinelumiere.savoysystems.co.uk/"
-    "CineLumiere.dll/TSelectItems.waSelectItemsPrompt."
-    "TcsWebMenuItem_600.TcsWebTab_601"
+    "CineLumiere.dll/TSelectItems.waSelectItemsPrompt.TcsWebMenuItem_600.TcsWebTab_601"
 )
 
 DATA_FILE = "data_institut_francais.json"
@@ -26,9 +26,9 @@ TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 
 
-# ============================================================
-# NORMALISATION
-# ============================================================
+# --------------------------------
+# TITLE CLEANERS
+# --------------------------------
 
 def normalize_title_for_match(title: str) -> str:
     t = title.lower()
@@ -65,9 +65,9 @@ def make_institut_url(display_title: str) -> str:
     return f"https://www.institut-francais.org.uk/cinema/{quote(slug)}/"
 
 
-# ============================================================
-# TMDB CACHE FUNCTIONS
-# ============================================================
+# --------------------------------
+# TMDB CACHE
+# --------------------------------
 
 def cache_lookup(title, year_hint):
     conn = sqlite3.connect(CACHE_DB)
@@ -112,9 +112,9 @@ def cache_store(title, year_hint, tmdb_id, runtime_min, director, final_year):
     conn.close()
 
 
-# ============================================================
-# TMDB LOOKUP + ENRICH
-# ============================================================
+# --------------------------------
+# TMDB LOOKUP + ENRICHMENT
+# --------------------------------
 
 def tmdb_lookup(title, year_hint=None):
     params = {
@@ -135,7 +135,6 @@ def tmdb_lookup(title, year_hint=None):
     if not results:
         return None
 
-    # Choose best fuzzy match
     norm_query = normalize_title_for_match(title)
 
     best = None
@@ -156,6 +155,17 @@ def tmdb_lookup(title, year_hint=None):
 
     if not best or best_score < 0.78:
         return None
+
+    # Ambiguity check
+    if not year_hint:
+        close = [
+            res for res in results
+            if SequenceMatcher(None, norm_query,
+                normalize_title_for_match(res.get("title", "") or "")
+            ).ratio() > best_score - 0.03
+        ]
+        if len(close) > 1:
+            return None
 
     return {
         "tmdb_id": best.get("id"),
@@ -187,7 +197,7 @@ def tmdb_enrich(info):
     # CREDITS
     try:
         r = requests.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
+            f"https://api.themovieddb.org/3/movie/{tmdb_id}/credits",
             params={"api_key": TMDB_API_KEY},
             timeout=10
         )
@@ -232,9 +242,9 @@ def get_tmdb_metadata(raw_title, base_title, year_hint):
     }
 
 
-# ============================================================
-# FETCH SAVOY HTML
-# ============================================================
+# --------------------------------
+# FETCH SAVOY LISTING PAGE
+# --------------------------------
 
 def fetch_html():
     try:
@@ -245,27 +255,26 @@ def fetch_html():
         return ""
 
 
-# ============================================================
-# DATE/TIME EXTRACTION
-# ============================================================
-
 DATE_RE = re.compile(r"([A-Za-z]+ \d{1,2} [A-Za-z]{3} \d{4})")
 TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
 
 
 def extract_date_times(block):
+    """Extract (date, time) pairs from SavoySystems blocks."""
     text = block.get_text(" ", strip=True)
     m = DATE_RE.search(text)
     if not m:
         return []
 
     date_str = m.group(1)
+
     for fmt in ("%A %d %b %Y", "%a %d %b %Y"):
         try:
             dt = datetime.strptime(date_str, fmt)
             break
         except:
             dt = None
+
     if not dt:
         return []
 
@@ -278,9 +287,9 @@ def extract_date_times(block):
     return [(dt.strftime("%Y-%m-%d"), t) for t in times]
 
 
-# ============================================================
-# PARSE (WITH MODAL REMOVAL FIX)
-# ============================================================
+# --------------------------------
+# PARSE THE PAGE
+# --------------------------------
 
 def parse(html):
     screenings = []
@@ -288,13 +297,6 @@ def parse(html):
         return screenings
 
     soup = BeautifulSoup(html, "html.parser")
-
-    # 🚫 REMOVE MODAL/IFRAME screens which show ALL days
-    for modal in soup.select("#tsmodal"):
-        modal.decompose()
-    for iframe in soup.find_all("iframe"):
-        iframe.decompose()
-
     headings = soup.find_all("h2")
 
     for h in headings:
@@ -306,18 +308,18 @@ def parse(html):
         display_title = re.split(r"\s*\(Cert.*", title_raw)[0].strip()
 
         base_title = clean_base_title_for_tmdb(display_title)
+        if not base_title:
+            continue
+
+        url = make_institut_url(display_title)
         year_guess = extract_year(title_raw)
         season = "French Film Festival London" if "FFF" in title_raw else ""
-        url = make_institut_url(display_title)
 
-        # Walk through sibling blocks until next <h2>
+        # Crawl forward until next heading
         sib = h.next_sibling
-        while sib and not (hasattr(sib, "name") and sib.name == "h2"):
-
-            if hasattr(sib, "name") and sib.name in ("p", "div", "li", "span"):
-
-                extracted = extract_date_times(sib)
-                for date_str, time_str in extracted:
+        while sib and getattr(sib, "name", None) not in ("h1", "h2", "h3"):
+            if getattr(sib, "name", None) in ("p", "div", "li", "span"):
+                for date_str, time_str in extract_date_times(sib):
                     screenings.append({
                         "title": display_title,
                         "tmdb_title_base": base_title,
@@ -331,15 +333,14 @@ def parse(html):
                         "runtime": "",
                         "format": "Digital",
                     })
-
             sib = sib.next_sibling
 
     return screenings
 
 
-# ============================================================
+# --------------------------------
 # INCREMENTAL STORAGE
-# ============================================================
+# --------------------------------
 
 def load_saved():
     if not os.path.exists(DATA_FILE):
@@ -367,9 +368,9 @@ def merge_incremental(old, new):
     return list(merged.values())
 
 
-# ============================================================
-# FFF DEDUPE
-# ============================================================
+# --------------------------------
+# FFF DEDUPING
+# --------------------------------
 
 def dedupe_fff(screenings):
     groups = defaultdict(list)
@@ -398,13 +399,13 @@ def dedupe_fff(screenings):
     return out
 
 
-# ============================================================
-# EXPORT
-# ============================================================
+# --------------------------------
+# EXPORT ONE ROW PER FILM PER DAY
+# --------------------------------
 
 def export_txt(data, path=OUTPUT_FILE):
-
     enriched = []
+
     for s in data:
         year_final = (
             s.get("year_final") or
@@ -457,17 +458,18 @@ def export_txt(data, path=OUTPUT_FILE):
     for g in final:
         times = sorted(set(g["times"]))
         time_str = ", ".join(times)
+
         href = f'<a href="{g["url"]}" target="_blank">{g["title"]}</a>'
 
         rows.append(
-            f'{g["date"]};'
-            f'{g["venue"]};'
-            f'{href};'
-            f'{g["director"]};'
-            f'{g["runtime"]};'
-            f'{g["format"]};'
-            f'{time_str};'
-            f'{g["year_final"]};'
+            f'{g["date"]} ; '
+            f'{g["venue"]} ; '
+            f'{href} ; '
+            f'{g["director"]} ; '
+            f'{g["runtime"]} ; '
+            f'{g["format"]} ; '
+            f'{time_str} ; '
+            f'{g["year_final"]} ; '
             f'{g["season"]}'
         )
 
@@ -477,15 +479,15 @@ def export_txt(data, path=OUTPUT_FILE):
     print(f"Saved semicolon export → {path}")
 
 
-# ============================================================
+# --------------------------------
 # MAIN
-# ============================================================
+# --------------------------------
 
 def scrape_institut_francais():
     html = fetch_html()
     parsed = parse(html)
 
-    # TMDB fallback fill
+    # TMDB ENRICH
     for s in parsed:
         info = get_tmdb_metadata(
             s["title"],
