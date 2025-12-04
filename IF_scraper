@@ -1,397 +1,97 @@
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
-from urllib.parse import quote
 import re
 import sqlite3
+from urllib.parse import quote
 
-# ============================================================
-# CONFIG
-# ============================================================
-
-BASE_LIST = (
-    "https://cinelumiere.savoysystems.co.uk/"
-    "CineLumiere.dll/TSelectItems.waSelectItemsPrompt.TcsWebMenuItem_600.TcsWebTab_601"
-)
-
-BASE_FILM = "https://www.institut-francais.org.uk/cinema"
-
+BASE = "https://www.institut-francais.org.uk/cinema/"
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 CACHE_DB = "tmdb_cache.db"
 
 OUTPUT_FILE = "institut_francais.txt"
 
 
-# ============================================================
-# NORMALISATION HELPERS
-# ============================================================
-
-def clean_title_for_slug(title: str) -> str:
-    """Convert film title into Institut Français URL slug."""
-    t = title.lower()
-    t = re.sub(r"[^a-z0-9\s-]", "", t)
-    t = re.sub(r"\s+", "-", t)
-    return t.strip("-")
+# ------------------------------------------------------------
+# TITLE CLEANING
+# ------------------------------------------------------------
+def clean_title(s):
+    if not s:
+        return ""
+    s = s.replace("  ", " ").strip()
+    return s
 
 
-def normalize_title_for_match(t: str) -> str:
-    t = t.lower()
-    t = re.sub(r"[^a-z0-9\s]", " ", t)
-    t = re.sub(r"\s+", " ", t)
-    return t.strip()
+def normalise_for_match(s):
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
-def extract_year(text: str):
-    """Extract first 4-digit year."""
-    m = re.search(r"\b(19|20)\d{2}\b", text)
-    return m.group(0) if m else None
-
-
-def to_date(ds):
-    """Convert yyyy-mm-dd to verify formatting."""
-    try:
-        return datetime.strptime(ds, "%Y-%m-%d").date()
-    except:
-        return None
-
-
-# ============================================================
-# TMDB LOOKUP / CACHE
-# ============================================================
-
-def cache_lookup(title, year_hint):
+# ------------------------------------------------------------
+# TMDB CACHE
+# ------------------------------------------------------------
+def tmdb_lookup(title, year_hint=None):
     conn = sqlite3.connect(CACHE_DB)
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT tmdb_id, runtime_min, director, final_year
-        FROM tmdb_cache
-        WHERE title=? AND (year_hint=? OR (year_hint IS NULL AND ? IS NULL))
-    """, (title, year_hint, year_hint))
-    row = cur.fetchone()
-    conn.close()
+    c = conn.cursor()
 
-    if not row:
-        return None
-
-    tmdb_id, runtime, director, final_year = row
-    return {
-        "tmdb_id": tmdb_id,
-        "runtime": runtime,
-        "director": director,
-        "year_final": final_year
-    }
-
-
-def cache_store(title, year_hint, tmdb_id, runtime, director, year_final):
-    conn = sqlite3.connect(CACHE_DB)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO tmdb_cache
-        (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    """, (title, year_hint, tmdb_id, runtime, director, year_final))
-    conn.commit()
-    conn.close()
-
-
-def tmdb_lookup(title, year_hint):
-    """Queried only when cache fails."""
-    params = {"api_key": TMDB_API_KEY, "query": title}
-    if year_hint:
-        params["year"] = year_hint
-
-    try:
-        resp = requests.get("https://api.themoviedb.org/3/search/movie", params=params, timeout=10)
-        data = resp.json()
-    except:
-        return None
-
-    results = data.get("results", [])
-    if not results:
-        return None
-
-    best = results[0]
-    return {
-        "tmdb_id": best.get("id"),
-        "tmdb_title": best.get("title"),
-        "tmdb_year": (best.get("release_date") or "")[:4],
-    }
-
-
-def tmdb_enrich(info):
-    tmdb_id = info.get("tmdb_id")
-    if not tmdb_id:
-        return info
-
-    enriched = dict(info)
-
-    # DETAILS
-    try:
-        d = requests.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-            params={"api_key": TMDB_API_KEY},
-            timeout=10
-        ).json()
-
-        enriched["runtime"] = d.get("runtime")
-        enriched["year_final"] = (d.get("release_date") or "")[:4]
-    except:
-        pass
-
-    # CREDITS
-    try:
-        c = requests.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
-            params={"api_key": TMDB_API_KEY},
-            timeout=10
-        ).json()
-
-        dirs = [x["name"] for x in c.get("crew", []) if x.get("job") == "Director"]
-        if dirs:
-            enriched["director"] = ", ".join(dirs)
-
-    except:
-        pass
-
-    return enriched
-
-
-def get_tmdb_metadata(raw_title, base_title, year_hint):
-    """Full pipeline: cache → tmdb → enrich → cache_store."""
-    cached = cache_lookup(base_title, year_hint)
-    if cached:
-        return cached
-
-    search = tmdb_lookup(base_title, year_hint)
-    if not search and raw_title != base_title:
-        search = tmdb_lookup(raw_title, year_hint)
-
-    if not search:
-        return {}
-
-    enriched = tmdb_enrich(search)
-
-    cache_store(
-        base_title,
-        year_hint,
-        enriched.get("tmdb_id"),
-        enriched.get("runtime"),
-        enriched.get("director"),
-        enriched.get("year_final") or enriched.get("tmdb_year")
+    c.execute(
+        "SELECT runtime_min, director, final_year FROM tmdb_cache WHERE title=? AND year_hint=?",
+        (title, str(year_hint) if year_hint else None),
     )
-
-    return {
-        "runtime": enriched.get("runtime"),
-        "director": enriched.get("director"),
-        "year_final": enriched.get("year_final") or enriched.get("tmdb_year"),
-    }
-
-
-# ============================================================
-# FETCH FUNCTIONS
-# ============================================================
-
-def fetch_html():
-    """Fetch main Savoy (Ciné Lumière) page."""
-    try:
-        r = requests.get(BASE_LIST, timeout=20)
-        r.raise_for_status()
-        return r.text
-    except Exception as e:
-        print(f"[ERROR] Could not load main list: {e}")
-        return ""
-
-
-def fetch_film_page(url):
-    """Fetch Institut Français film detail page."""
-    try:
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
-        return r.text
-    except:
-        return ""
-
-
-# ============================================================
-# PARSING
-# ============================================================
-
-def parse_main_list(html):
-    """Extract all films & generate film detail URLs."""
-    soup = BeautifulSoup(html, "html.parser")
-
-    films = []
-
-    for h in soup.find_all("h2"):
-        a = h.find("a")
-        if not a or "TSelectItems" not in (a.get("href") or ""):
-            continue
-
-        raw_title = h.get_text(" ", strip=True)
-        display_title = re.split(r"\s*\(Cert", raw_title)[0].strip()
-
-        # Build Institut Français film URL
-        slug = clean_title_for_slug(display_title)
-        film_url = f"{BASE_FILM}/{quote(slug)}/"
-
-        films.append({
-            "title": display_title,
-            "raw_title": raw_title,
-            "url": film_url,
-            "year_guess": extract_year(raw_title),
-            "season": "French Film Festival London" if "FFF" in raw_title else ""
-        })
-
-    return films
-
-
-def extract_screenings_from_film(html):
-    soup = BeautifulSoup(html, "html.parser")
-
-    rows = []
-    table = soup.find("table")
-    if not table:
-        return rows
-
-    for tr in table.find_all("tr"):
-        date_el = tr.find("time", class_="date")
-        time_el = tr.find("time", class_="time")
-
-        if not date_el or not time_el:
-            continue
-
-        ds = date_el.get("datetime")  # YYYY-MM-DD
-        ts = time_el.get("datetime")  # HH:MM
-
-        if not ds or not ts:
-            continue
-
-        rows.append((ds, ts))
-
-    return rows
-
-
-# ============================================================
-# SCRAPE CONTROLLER
-# ============================================================
-
-def scrape():
-    html = fetch_html()
-    films = parse_main_list(html)
-
-    results = []
-
-    for film in films:
-        print("→", film["title"])
-
-        film_html = fetch_film_page(film["url"])
-        screenings = extract_screenings_from_film(film_html)
-
-        # TMDB backup
-        meta = get_tmdb_metadata(
-            film["title"],
-            film["title"],
-            film["year_guess"]
-        )
-
-        director = meta.get("director", "")
-        runtime = meta.get("runtime", "")
-        year_final = meta.get("year_final", film["year_guess"] or "")
-
-        for (ds, ts) in screenings:
-            # Validate date
-            if not to_date(ds):
-                continue
-
-            results.append({
-                "date": ds,
-                "venue": "Institut français",
-                "title": film["title"],
-                "url": film["url"],
-                "director": director,
-                "runtime": runtime,
-                "format": "Digital",
-                "time": ts,
-                "year": year_final,
-                "season": film["season"]
-            })
-
-    return results
-
-
-# ============================================================
-# EXPORT
-# ============================================================
-
-def export_txt(rows):
-    rows_sorted = sorted(rows, key=lambda x: (x["date"], x["time"], x["title"]))
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
-import re
-import sqlite3
-
-BASE = "https://www.institut-francais.org.uk"
-TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
-CACHE_DB = "tmdb_cache.db"
-
-# ------------------------------------------------------------
-# TMDB LOOKUP (unchanged, working)
-# ------------------------------------------------------------
-
-def tmdb_lookup(title, year_hint):
-    conn = sqlite3.connect(CACHE_DB)
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT tmdb_id, runtime_min, director, final_year
-        FROM tmdb_cache
-        WHERE title = ? AND year_hint = ?
-    """, (title, year_hint))
-
-    row = cur.fetchone()
+    row = c.fetchone()
     if row:
         conn.close()
-        tmdb_id, runtime, director, year = row
-        return runtime, director, year
+        return row[0], row[1], row[2]
 
-    params = {"api_key": TMDB_API_KEY, "query": title}
-    if year_hint:
-        params["year"] = year_hint
-
+    # API fallback
     try:
+        params = {"api_key": TMDB_API_KEY, "query": title}
         r = requests.get("https://api.themoviedb.org/3/search/movie", params=params)
-        r.raise_for_status()
+        data = r.json()
     except:
         conn.close()
         return None, "", year_hint
 
-    data = r.json()
     if not data.get("results"):
         conn.close()
         return None, "", year_hint
 
     movie = data["results"][0]
-    movie_id = movie["id"]
+    movie_id = movie.get("id")
     year = (movie.get("release_date") or "0000")[:4]
 
+    # details
     detail = requests.get(
         f"https://api.themoviedb.org/3/movie/{movie_id}",
-        params={"api_key": TMDB_API_KEY, "append_to_response": "credits"}
+        params={"api_key": TMDB_API_KEY, "append_to_response": "credits"},
     ).json()
 
     runtime = detail.get("runtime")
     director = ""
-    for c in detail.get("credits", {}).get("crew", []):
-        if c.get("job") == "Director":
-            director = c["name"]
+    for crew in detail.get("credits", {}).get("crew", []):
+        if crew.get("job") == "Director":
+            director = crew.get("name")
             break
 
-    cur.execute("""
+    # store
+    c.execute(
+        """
         INSERT OR REPLACE INTO tmdb_cache
         (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (title, year_hint, movie_id, runtime, director, year, datetime.utcnow().isoformat()))
+        """,
+        (
+            title,
+            str(year_hint) if year_hint else None,
+            movie_id,
+            runtime,
+            director,
+            year,
+            datetime.utcnow().isoformat(),
+        ),
+    )
     conn.commit()
     conn.close()
 
@@ -399,170 +99,187 @@ def tmdb_lookup(title, year_hint):
 
 
 # ------------------------------------------------------------
-# Extract film URLs from main Savoy page
+# FILM PAGE METADATA
 # ------------------------------------------------------------
+def get_film_page_metadata(url):
+    try:
+        html = requests.get(url).text
+    except:
+        return "", "", ""
 
-SAVOY_URL = (
-    "https://cinelumiere.savoysystems.co.uk/"
-    "CineLumiere.dll/TSelectItems.waSelectItemsPrompt.TcsWebMenuItem_600.TcsWebTab_601"
-)
-
-def fetch_main_html():
-    r = requests.get(SAVOY_URL, headers={"User-Agent": "Mozilla/5.0"})
-    return r.text
-
-
-def extract_films(html):
     soup = BeautifulSoup(html, "html.parser")
-    headings = soup.find_all("h2")
+
+    # director
+    director = ""
+    dir_el = soup.select_one(".film-details__meta-item--director")
+    if dir_el:
+        director = dir_el.get_text(" ", strip=True)
+        director = re.sub(r"^Director\s*", "", director).strip()
+
+    # runtime
+    runtime = ""
+    run_el = soup.select_one(".film-details__meta-item--duration")
+    if run_el:
+        txt = run_el.get_text(" ", strip=True)
+        m = re.search(r"(\d+)\s*min", txt)
+        if m:
+            runtime = m.group(1)
+
+    # year
+    year = ""
+    year_el = soup.select_one(".film-details__meta-item--year")
+    if year_el:
+        txt = year_el.get_text(" ", strip=True)
+        m = re.search(r"(19\d{2}|20\d{2})", txt)
+        if m:
+            year = m.group(1)
+
+    return director, runtime, year
+
+
+# ------------------------------------------------------------
+# PARSE MAIN LISTINGS PAGE
+# ------------------------------------------------------------
+def fetch_main_page():
+    url = "https://www.institut-francais.org.uk/cinema/whats-on/"
+    print("Fetching Institut Français main listings…")
+    html = requests.get(url).text
+    return BeautifulSoup(html, "html.parser")
+
+
+def extract_films(soup):
+    print("Extracting films…")
 
     films = []
+    cards = soup.select(".film-card")
 
-    for h in headings:
-        a = h.find("a")
-        if not a:
+    print(f"→ Found {len(cards)} films")
+
+    for card in cards:
+        title_el = card.select_one(".film-card__title")
+        if not title_el:
             continue
 
-        href = a.get("href") or ""
-        if "TSelectItems" not in href:
+        title = clean_title(title_el.get_text(strip=True))
+
+        link_el = card.find("a", href=True)
+        if not link_el:
             continue
 
-        raw_title = h.get_text(" ", strip=True)
-        base_title = re.split(r"\(Cert", raw_title)[0].strip()
+        url = link_el["href"]
+        if not url.startswith("http"):
+            url = BASE + url.lstrip("/")
 
-        # Build IF film page URL
-        slug = re.sub(r"[^a-z0-9\s-]", "", base_title.lower())
-        slug = re.sub(r"\s+", "-", slug).strip("-")
-        film_page = f"{BASE}/cinema/{slug}/"
-
-        films.append({
-            "title": base_title,
-            "film_page": film_page,
-            "year_guess": extract_year(raw_title),
-            "season": "French Film Festival London" if "FFF" in raw_title else ""
-        })
+        films.append((title, url))
 
     return films
 
 
-def extract_year(text):
-    m = re.search(r"\((19|20)\d{2}\)", text)
-    return m.group(0).strip("()") if m else ""
-
-
 # ------------------------------------------------------------
-# Extract screenings from EACH film page (correct fix)
+# PARSE PER-FILM SHOWTIMES TABLES
 # ------------------------------------------------------------
+def extract_showtimes(title, url):
+    print(f" → {title}")
 
-def extract_screenings_from_film_page(url):
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    soup = BeautifulSoup(r.text, "html.parser")
+    try:
+        html = requests.get(url).text
+    except:
+        return []
 
-    screenings = []
+    soup = BeautifulSoup(html, "html.parser")
 
-    # UNIVERSAL SELECTOR for ANY STRUCTURE:
-    rows = soup.find_all("tr")
+    rows = soup.select("table.film-performances-table tr")
+    out = []
 
-    current_date = None
+    for row in rows:
+        date_el = row.select_one("time.date")
+        time_el = row.select_one("time.time")
 
-    for tr in rows:
-        # DATE CELL
-        date_el = tr.find("time", class_="date")
-        if date_el and date_el.has_attr("datetime"):
-            current_date = date_el["datetime"]  # already YYYY-MM-DD
-
-        # TIME CELL
-        time_el = tr.find("time", class_="time")
-        if not time_el or not current_date:
+        if not date_el or not time_el:
             continue
 
-        show_time = time_el.get_text(strip=True)
+        date_val = date_el.get("datetime", "")
+        time_val = time_el.get("datetime", "")
 
-        # BOOKING LINK
-        a = tr.find("a", href=True)
-        book_link = a["href"] if a else ""
+        if not date_val or not time_val:
+            continue
 
-        screenings.append({
-            "date": current_date,
-            "time": show_time,
-            "booking": book_link
-        })
+        date_str = date_val.strip()
+        time_str = time_val.strip()
 
-    return screenings
+        out.append((date_str, time_str))
+
+    return out
 
 
 # ------------------------------------------------------------
-# MAIN SCRAPE LOGIC
+# MAIN SCRAPER
 # ------------------------------------------------------------
-
 def scrape():
-    print("Fetching Institut Français main listings…")
-    html = fetch_main_html()
+    soup = fetch_main_page()
+    films = extract_films(soup)
 
-    print("Extracting films…")
-    films = extract_films(html)
+    rows = []
 
-    print(f"→ Found {len(films)} films")
+    for title, url in films:
+        showtimes = extract_showtimes(title, url)
+        if not showtimes:
+            continue
 
-    output_rows = []
+        # website metadata first
+        director, runtime, year = get_film_page_metadata(url)
 
-    for f in films:
-        title = f["title"]
-        page = f["film_page"]
-        print(f" → {title}")
+        # fallback to TMDB if missing
+        if not runtime or not director or not year:
+            tmdb_runtime, tmdb_dir, tmdb_year = tmdb_lookup(title, year)
+            runtime = runtime or tmdb_runtime or ""
+            director = director or tmdb_dir or ""
+            year = year or tmdb_year or ""
 
-        screenings = extract_screenings_from_film_page(page)
+        for date_str, time_str in showtimes:
+            rows.append({
+                "date": date_str,
+                "venue": "Institut français",
+                "title": title,
+                "director": director,
+                "runtime": runtime,
+                "format": "Digital",
+                "time": time_str,
+                "year": year,
+                "url": url,
+                "season": "",
+            })
 
-        # TMDB metadata
-        tmdb_runtime, tmdb_director, tmdb_year = tmdb_lookup(title, f["year_guess"])
-
-        for s in screenings:
-            title_html = f'<a href="{s["booking"]}">{title}</a>'
-
-            output_rows.append(
-                f'{s["date"]} ; '
-                f'Institut français ; '
-                f'{title_html} ; '
-                f'{tmdb_director or ""} ; '
-                f'{tmdb_runtime or ""} ; '
-                f'Digital ; '
-                f'{s["time"]} ; '
-                f'{tmdb_year or ""} ; '
-                f'{f["season"]}'
-            )
-
-    with open("institut_francais.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(output_rows))
-
-    print(f"Saved → institut_francais.txt ({len(output_rows)} rows)")
-    return output_rows
+    return rows
 
 
-if __name__ == "__main__":
-    scrape()
+# ------------------------------------------------------------
+# EXPORT
+# ------------------------------------------------------------
+def save(rows):
+    rows = sorted(rows, key=lambda r: (r["date"], r["time"], r["title"]))
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for r in rows_sorted:
+        for r in rows:
             title_html = f'<a href="{r["url"]}" target="_blank">{r["title"]}</a>'
             f.write(
-                f'{r["date"]} ; '
-                f'{r["venue"]} ; '
-                f'{title_html} ; '
-                f'{r["director"]} ; '
-                f'{r["runtime"]} ; '
-                f'{r["format"]} ; '
-                f'{r["time"]} ; '
-                f'{r["year"]} ; '
+                f'{r["date"]};'
+                f'{r["venue"]};'
+                f'{title_html};'
+                f'{r["director"]};'
+                f'{r["runtime"]};'
+                f'{r["format"]};'
+                f'{r["time"]};'
+                f'{r["year"]};'
                 f'{r["season"]}\n'
             )
 
-    print("✔ Saved:", OUTPUT_FILE)
+    print(f"Saved → {OUTPUT_FILE} ({len(rows)} rows)")
 
 
-# ============================================================
+# ------------------------------------------------------------
 # MAIN
-# ============================================================
-
+# ------------------------------------------------------------
 if __name__ == "__main__":
     rows = scrape()
-    export_txt(rows)
+    save(rows)
