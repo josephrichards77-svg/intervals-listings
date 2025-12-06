@@ -32,64 +32,73 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // FORCE LAST ROW CARDS TO ALIGN NICELY
+    // NORMALISE FORMATS
+    // -------------------------------------------------------
+    function normaliseFormat(fmt) {
+        if (!fmt) return "DCP";
+
+        let f = fmt.trim().toUpperCase().replace(/\s+/g, "");
+
+        // 4K → treat as DCP
+        if (["4K", "4KRESTORATION", "4"].includes(f)) return "DCP";
+
+        // digital equivalents → DCP
+        if (["DIGITAL", "DIG", "HD", "DCP"].includes(f)) return "DCP";
+
+        // 35mm
+        if (f === "35MM" || f === "35") return "35mm";
+
+        // 70mm
+        if (f === "70MM" || f === "70") return "70mm";
+
+        // 16mm
+        if (f === "16MM" || f === "16") return "16mm";
+
+        return fmt.trim();
+    }
+
+    // -------------------------------------------------------
+    // TIME NORMALISER → ALWAYS 24h format
+    // -------------------------------------------------------
+    function normaliseTime(t) {
+        if (!t) return "";
+
+        // Remove text like "PM", "pm", "am", etc.
+        let clean = t.replace(/\./g, "").trim().toUpperCase();
+
+        // If already 24h → return as is
+        if (/^\d{2}:\d{2}$/.test(clean)) return clean;
+
+        // Match 11:30 AM / 8:15PM
+        const m = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+        if (!m) return clean;
+
+        let [_, hh, mm, suffix] = m;
+        hh = parseInt(hh);
+
+        if (suffix === "PM" && hh !== 12) hh += 12;
+        if (suffix === "AM" && hh === 12) hh = 0;
+
+        return `${String(hh).padStart(2, "0")}:${mm}`;
+    }
+
+    // -------------------------------------------------------
+    // GUARANTEED FIX: Manually apply class to cards in the final row
     // -------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
+
             Array.from(screeningsContainer.children).forEach(card => {
                 card.classList.remove('last-row-card');
             });
 
             const children = Array.from(screeningsContainer.children);
             const lastThree = children.slice(-3);
-            lastThree.forEach(card => card.classList.add('last-row-card'));
+
+            lastThree.forEach(card => {
+                card.classList.add('last-row-card');
+            });
         });
-    }
-
-    // -------------------------------------------------------
-    // 🔥 ROBUST 24-HOUR TIME NORMALISER
-    // -------------------------------------------------------
-    function normaliseTime(t) {
-        if (!t) return "";
-
-        t = t.trim()
-             .replace(/\./g, ":")              // 5.30pm → 5:30pm
-             .replace(/\s+/g, " ")             // collapse weird whitespace
-             .replace(/([ap]m)$/i, " $1")      // 8pm → 8 pm
-             .replace(/([AP]M)$/g, " $1");     // handles caps
-
-        // Native parse first
-        let d = new Date("2000-01-01 " + t);
-        if (!isNaN(d.getTime())) {
-            return d.toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit"
-            });
-        }
-
-        // If missing minutes (e.g., “8 pm”)
-        const hm = t.match(/^(\d{1,2})\s*([ap]m)$/i);
-        if (hm) {
-            let d2 = new Date(`2000-01-01 ${hm[1]}:00 ${hm[2]}`);
-            return d2.toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit"
-            });
-        }
-
-        // Final fallback: manual extraction
-        const simple = t.match(/(\d{1,2}):?(\d{2})?/);
-        if (simple) {
-            let h = parseInt(simple[1]);
-            let m = simple[2] ? parseInt(simple[2]) : 0;
-
-            if (/pm/i.test(t) && h < 12) h += 12;
-            if (/am/i.test(t) && h === 12) h = 0;
-
-            return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-        }
-
-        return t; // truly unparseable
     }
 
     // -------------------------------------------------------
@@ -103,7 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const formatted = date.toISOString().split("T")[0];
 
         const url =
-            "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2d-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+            "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
         fetch(url)
             .then(res => res.json())
@@ -118,15 +127,15 @@ document.addEventListener("DOMContentLoaded", function () {
                 const data = {};
 
                 rows.forEach(row => {
+
                     if (!row || row.length < 3) return;
 
-                    // Map all 9 columns EXACTLY
                     const rowDate  = row[0];
                     const cinema   = row[1];
                     const title    = row[2];
                     const director = row[3];
                     const runtime  = row[4];
-                    const format   = row[5];
+                    const format   = normaliseFormat(row[5]);
                     const timeRaw  = row[6];
                     const year     = row[7];
                     const notes    = row[8];
@@ -138,24 +147,22 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     let film = data[cinema].find(f => f.title === title);
 
-                    if (!film) {
-                        const processedTimes = timeRaw
-                            ? timeRaw.split(",").map(t => normaliseTime(t.trim()))
-                            : [];
+                    let times = timeRaw
+                        ? timeRaw.split(",").map(t => normaliseTime(t.trim()))
+                        : [];
 
+                    if (!film) {
                         film = {
                             title,
                             details: [
                                 director || "",
                                 year || "",
                                 runtime ? (String(runtime).includes("min") ? runtime : runtime + " min") : "",
-                                format || "",
+                                format,
                                 notes || ""
                             ].filter(Boolean).join(", "),
-
-                            times: processedTimes
+                            times: times
                         };
-
                         data[cinema].push(film);
                     }
                 });
@@ -166,7 +173,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER CARDS
+                // RENDER 3-column layout
                 // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
@@ -198,6 +205,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 });
 
                 applyLastRowFix();
+
             })
             .catch(err => {
                 console.error("Listings fetch error:", err);
@@ -206,7 +214,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // CONTROLS
+    // NAVIGATION
     // -------------------------------------------------------
     document.getElementById("prev-btn").onclick = function () {
         currentDate.setDate(currentDate.getDate() - 1);
@@ -230,7 +238,9 @@ document.addEventListener("DOMContentLoaded", function () {
         loadListingsFor(currentDate);
     };
 
-    // LOAD FIRST VIEW
+    // -------------------------------------------------------
+    // INITIAL PAGE LOAD
+    // -------------------------------------------------------
     updateCalendar();
     loadListingsFor(currentDate);
 
