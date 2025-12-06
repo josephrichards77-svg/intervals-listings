@@ -1,69 +1,131 @@
-# intervals_cleaning.py
+"""
+intervals_cleaning.py
+
+Shared cleaning, normalisation, merging, exporting for all scrapers.
+"""
 
 import re
 import html
+from datetime import datetime
 
-
-def looks_all_caps(s: str) -> bool:
-    """Return True if alphabetic characters are overwhelmingly uppercase."""
-    letters = [c for c in s if c.isalpha()]
-    if not letters:
-        return False
-    uppers = sum(1 for c in letters if c.isupper())
-    return uppers / len(letters) >= 0.80
-
-
-def soft_titlecase(s: str) -> str:
-    """Title-case but preserve words like 'III', 'I', 'II', etc."""
-    parts = s.split()
-    out = []
-    for w in parts:
-        if w.isupper() and len(w) <= 3:  # preserve acronyms/roman nums
-            out.append(w)
-        else:
-            out.append(w.capitalize())
-    return " ".join(out)
+# ============================================================
+# DEBUG SWITCH
+# ============================================================
+DEBUG_CLEANING = False
 
 
 # ============================================================
-# CLEANER — safe, preserves ’71, fixes ALL-CAPS
+# BASIC CLEANER
 # ============================================================
 
 def clean(text):
-    """General cleaner: strip matched quote pairs, collapse spaces, fix ALL-CAPS."""
-    if text is None:
-        return ""
+    """General cleaner: quote trimming, HTML unescape, collapse spaces."""
 
-    s = str(text)
+    if DEBUG_CLEANING:
+        print("CLEANING INPUT:", repr(text))
+
+    if text is None:
+        s = ""
+    else:
+        s = str(text)
+
+    # HTML entities
     s = html.unescape(s).strip()
 
-    # Only strip quotes when matching pairs
-    matched_pairs = [
+    # Strip paired quotes
+    quote_pairs = [
         ('"', '"'),
         ("'", "'"),
         ("“", "”"),
         ("‘", "’"),
     ]
-    for left, right in matched_pairs:
+    for left, right in quote_pairs:
         if s.startswith(left) and s.endswith(right):
             s = s[len(left):-len(right)].strip()
             break
 
-    # Fix ALL-CAPS titles → normal Title Case
-    if looks_all_caps(s):
-        s = soft_titlecase(s)
+    # Fix ALL-CAPS (only if not HTML)
+    if "<" not in s and s.isupper() and len(s) > 3:
+        s = s.title()
 
-    # Collapse double spaces
+    # Collapse multiple spaces
     s = re.sub(r"\s{2,}", " ", s)
+
+    if DEBUG_CLEANING:
+        print("CLEANED OUTPUT:", repr(s))
 
     return s
 
 
 # ============================================================
-# NORMALISER — ensure all fields exist and are strings
+# FORMAT NORMALISER
+# ============================================================
+
+def normalise_format(fmt):
+    """Force formats into consistent set."""
+
+    if not fmt or fmt.strip() == "":
+        return "DCP"
+
+    f = fmt.strip().upper().replace(" ", "").replace("-", "")
+
+    # 4K variants → DCP
+    if f in ["4K", "4KRESTORATION", "4"]:
+        return "DCP"
+
+    # digital equivalents → DCP
+    if f in ["DIGITAL", "HD", "DCP"]:
+        return "DCP"
+
+    # physical formats
+    if f in ["35MM", "35"]:
+        return "35mm"
+    if f in ["70MM", "70"]:
+        return "70mm"
+    if f in ["16MM", "16"]:
+        return "16mm"
+
+    return fmt.strip()
+
+
+# ============================================================
+# TIME NORMALISER (ALWAYS 24H)
+# ============================================================
+
+def normalise_time(t):
+    """Convert all AM/PM times to HH:MM 24-hour format."""
+
+    if not t:
+        return ""
+
+    s = t.replace(".", "").strip().upper()
+
+    # Already 24h
+    if re.fullmatch(r"\d{2}:\d{2}", s):
+        return s
+
+    # Match "8:30 PM"
+    m = re.match(r"^(\d{1,2}):(\d{2})\s*(AM|PM)$", s)
+    if not m:
+        return s  # leave unchanged
+
+    hh, mm, suffix = m.groups()
+    hh = int(hh)
+
+    if suffix == "PM" and hh != 12:
+        hh += 12
+    if suffix == "AM" and hh == 12:
+        hh = 0
+
+    return f"{hh:02d}:{mm}"
+
+
+# ============================================================
+# NORMALISER — unify keys + clean everything
 # ============================================================
 
 def normalise_row(row):
+    """Ensure consistent keys + clean strings everywhere."""
 
     normal = {
         "venue": "",
@@ -84,20 +146,31 @@ def normalise_row(row):
 
         val = row[key]
 
+        # Times → list of cleaned + normalised 24h times
         if key == "times":
+            out = []
             if isinstance(val, list):
-                normal[key] = [clean(t) for t in val if t]
-            else:
-                t = clean(str(val)) if val is not None else ""
-                normal[key] = [t] if t else []
-        else:
-            normal[key] = clean(str(val)) if val is not None else ""
+                for t in val:
+                    if t:
+                        out.append(normalise_time(clean(t)))
+            elif val:
+                out = [normalise_time(clean(str(val)))]
+            normal[key] = out
+            continue
+
+        # FORMAT normalisation
+        if key == "format":
+            normal[key] = normalise_format(val)
+            continue
+
+        # Everything else → cleaned string
+        normal[key] = clean(val) if val else ""
 
     return normal
 
 
 # ============================================================
-# MERGER
+# MERGING — one row per (venue, date, title)
 # ============================================================
 
 def merge_rows(existing, new):
@@ -111,8 +184,11 @@ def merge_rows(existing, new):
                 if t not in row["times"]:
                     row["times"].append(t)
 
-            # fill missing fields
-            for field in ["format", "extra", "url", "director", "runtime_min", "year"]:
+            # fill missing metadata
+            for field in [
+                "format", "extra", "url",
+                "director", "runtime_min", "year"
+            ]:
                 if not row[field] and new[field]:
                     row[field] = new[field]
 
@@ -122,36 +198,33 @@ def merge_rows(existing, new):
 
 
 # ============================================================
-# EXPORT — 9 fixed columns
+# EXPORT — fixed 9-column semicolon format
 # ============================================================
 
 def export_rows(rows):
-
     rows_sorted = sorted(rows, key=lambda r: (r["date"], r["title"]))
 
+    def field(x):
+        return x if x else " "
+
     lines = []
+
     for r in rows_sorted:
-        date     = r["date"] or ""
-        venue    = r["venue"] or ""
-        title    = r["title"] or ""
-        director = r["director"] or ""
-        runtime  = str(r["runtime_min"] or "")
-        fmt      = r["format"] or ""
-        times    = ", ".join(sorted(r["times"])) if r["times"] else ""
-        year     = r["year"] or ""
-        notes    = r["extra"] or ""
+
+        times = ", ".join(sorted(r.get("times", []))) if r.get("times") else ""
 
         line = ";".join([
-            date,
-            venue,
-            title,
-            director,
-            runtime,
-            fmt,
-            times,
-            year,
-            notes,
+            field(r.get("date", "")),
+            field(r.get("venue", "")),
+            field(r.get("title", "")),
+            field(r.get("director", "")),
+            field(str(r.get("runtime_min") or "")),
+            field(r.get("format", "")),
+            field(times),
+            field(r.get("year", "")),
+            field(r.get("extra", "")),
         ])
+
         lines.append(line)
 
     return "\n".join(lines)
