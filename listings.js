@@ -2,9 +2,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     let currentDate = new Date();
 
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     // ORDINALS (1st, 2nd, 3rd…)
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     function getOrdinal(n) {
         if (n > 3 && n < 21) return "th";
         switch (n % 10) {
@@ -15,9 +15,9 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     // FULL DATE — Wednesday, November 26th, 2025
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     function formatFullDate(date) {
         const day = date.getDate();
         const suffix = getOrdinal(day);
@@ -31,18 +31,19 @@ document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
     }
 
-    // -------------------------------------------------------
-    // NORMALISE FORMATS
-    // -------------------------------------------------------
+    //-------------------------------------------------------
+    // FORMAT NORMALISER
+    //-------------------------------------------------------
     function normaliseFormat(fmt) {
-        if (!fmt) return "DCP";
+        // Blank, null, undefined, or whitespace → DCP
+        if (!fmt || fmt.trim() === "") return "DCP";
 
         let f = fmt.trim().toUpperCase().replace(/\s+/g, "");
 
-        // Treat 4K as DCP
+        // 4K → DCP
         if (["4K", "4KRESTORATION", "4"].includes(f)) return "DCP";
 
-        // Digital variants → DCP
+        // digital variants → DCP
         if (["DIGITAL", "DIG", "HD", "DCP"].includes(f)) return "DCP";
 
         // 35mm
@@ -54,20 +55,22 @@ document.addEventListener("DOMContentLoaded", function () {
         // 16mm
         if (f === "16MM" || f === "16") return "16mm";
 
+        // fallback
         return fmt.trim();
     }
 
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     // TIME NORMALISER → ALWAYS 24h format
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     function normaliseTime(t) {
         if (!t) return "";
 
         let clean = t.replace(/\./g, "").trim().toUpperCase();
 
-        // Already 24h format
+        // Already 24h
         if (/^\d{2}:\d{2}$/.test(clean)) return clean;
 
+        // Match 11:30 AM
         const m = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
         if (!m) return clean;
 
@@ -80,9 +83,9 @@ document.addEventListener("DOMContentLoaded", function () {
         return `${String(hh).padStart(2, "0")}:${mm}`;
     }
 
-    // -------------------------------------------------------
-    // GUARANTEED FIX: Mark last row of cards
-    // -------------------------------------------------------
+    //-------------------------------------------------------
+    // Apply CSS class to last row cards
+    //-------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
 
@@ -99,9 +102,9 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     // LOAD LISTINGS FROM GOOGLE SHEETS
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     function loadListingsFor(date) {
 
         const container = document.getElementById("cinema-listings");
@@ -126,9 +129,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 rows.forEach(row => {
 
-                    if (!row) return;
-
-                    // SAFELY EXPAND TO 9 COLUMNS
+                    // Guarantee 9 safe fields
                     const safe = [];
                     for (let i = 0; i < 9; i++) {
                         safe[i] = row[i] || "";
@@ -149,11 +150,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     if (!data[cinema]) data[cinema] = [];
 
+                    let film = data[cinema].find(f => f.title === title);
+
+                    // Times
                     let times = timeRaw
                         ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
                         : [];
-
-                    let film = data[cinema].find(f => f.title === title);
 
                     if (!film) {
                         film = {
@@ -176,9 +178,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     return;
                 }
 
-                // -------------------------------------------------------
-                // RENDER CARDS
-                // -------------------------------------------------------
+                //-------------------------------------------------------
+                // RENDER
+                //-------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
                     screenings.sort((a, b) => {
@@ -217,9 +219,9 @@ document.addEventListener("DOMContentLoaded", function () {
             });
     }
 
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     // NAVIGATION
-    // -------------------------------------------------------
+    //-------------------------------------------------------
     document.getElementById("prev-btn").onclick = function () {
         currentDate.setDate(currentDate.getDate() - 1);
         updateCalendar();
@@ -242,9 +244,9 @@ document.addEventListener("DOMContentLoaded", function () {
         loadListingsFor(currentDate);
     };
 
-    // -------------------------------------------------------
-    // INITIAL PAGE LOAD
-    // -------------------------------------------------------
+    //-------------------------------------------------------
+    // INITIAL LOAD
+    //-------------------------------------------------------
     updateCalendar();
     loadListingsFor(currentDate);
 
