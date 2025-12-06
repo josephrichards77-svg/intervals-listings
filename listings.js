@@ -135,15 +135,27 @@ document.addEventListener("DOMContentLoaded", function () {
                         safe[i] = row[i] || "";
                     }
 
-                    const rowDate  = safe[0];
-                    const cinema   = safe[1];
-                    const title    = safe[2];
-                    const director = safe[3];
-                    const runtime  = safe[4];
-                    const format   = normaliseFormat(safe[5]);
-                    const timeRaw  = safe[6];
-                    const year     = safe[7];
-                    const notes    = safe[8];
+                   const rowDate  = safe[0];
+const cinema   = safe[1];
+
+const rawTitle = safe[2].trim();
+let titleText = rawTitle;
+let titleLink = "";
+
+// Extract link + clean title if CSV contains <a href="...">Title</a>
+const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
+if (m) {
+    titleLink = m[1];
+    titleText = m[2];
+}
+
+const director = safe[3];
+const runtime  = safe[4];
+const format   = normaliseFormat(safe[5]);
+const timeRaw  = safe[6];
+const year     = safe[7];
+const notes    = safe[8];
+
 
                     if (rowDate !== formatted) return;
                     if (!cinema) return;
