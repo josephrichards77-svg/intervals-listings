@@ -2,7 +2,6 @@ import datetime
 import os
 import re
 import csv
-import sqlite3
 import argparse
 import logging
 
@@ -19,11 +18,11 @@ from dataclasses import dataclass, field
 CINEMA_NAME = "Rich Mix"
 BASE_URL = "https://richmix.org.uk"
 URL = f"{BASE_URL}/whats-on/cinema/"
+
 TMDB_DB_FILENAME = "tmdb_cache.db"
 TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
 
 HERE = os.path.dirname(__file__)
-CACHE_FILE = os.path.join(HERE, "richmix_history.csv")
 DEFAULT_EXPORT = os.path.join(HERE, "richmix_semicolon.txt")
 
 logging.basicConfig(
@@ -45,20 +44,13 @@ def normalize_url(href: str) -> str:
     return BASE_URL + "/" + href
 
 def clean_field(x):
-    """
-    Ensure CSV-friendly fields.
-    The CMS requires blank fields to contain a single space.
-    """
     if x is None:
-        return " "
-    x = str(x).strip()
-    return x if x else " "
+        return ""
+    return str(x).strip()
 
 def strip_title(title: str) -> str:
-    """Remove BBFC ratings from the end."""
     rating_re = re.compile(r"\b(U|PG|12A|12|15|18)\b$", re.IGNORECASE)
     return rating_re.sub("", title).strip()
-
 
 # ================================================================
 # TMDB CACHE + API
@@ -89,10 +81,8 @@ def tmdb_cache_upsert(title, tmdb_id, runtime, director, final_year):
     conn = get_tmdb_conn()
     if not conn:
         return
-
     ts = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
     cur = conn.cursor()
-
     cur.execute("""
         INSERT INTO tmdb_cache (title, tmdb_id, runtime_min, director, final_year, last_updated)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -103,13 +93,11 @@ def tmdb_cache_upsert(title, tmdb_id, runtime, director, final_year):
             final_year=excluded.final_year,
             last_updated=excluded.last_updated
     """, (title, tmdb_id, runtime, director, final_year, ts))
-
     conn.commit()
 
 def tmdb_fetch(title: str):
     if not TMDB_API_KEY:
         return {}
-
     try:
         r = requests.get(
             "https://api.themoviedb.org/3/search/movie",
@@ -119,27 +107,22 @@ def tmdb_fetch(title: str):
         results = r.get("results", [])
     except:
         return {}
-
     if not results:
         return {}
-
     best = results[0]
     tmdb_id = best["id"]
-
     det = requests.get(
-        f"https://api.themoviedb/3/movie/{tmdb_id}",
+        f"https://api.themoviedb.org/3/movie/{tmdb_id}",
         params={"api_key": TMDB_API_KEY},
         timeout=10
     ).json()
-
     runtime = det.get("runtime")
     release_date = det.get("release_date", "")
     year = int(release_date[:4]) if len(release_date) >= 4 else ""
-
     director = ""
     try:
         credits = requests.get(
-            f"https://api.themoviedb/3/movie/{tmdb_id}/credits",
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
             params={"api_key": TMDB_API_KEY},
             timeout=10
         ).json()
@@ -149,7 +132,6 @@ def tmdb_fetch(title: str):
                 break
     except:
         pass
-
     return {
         "tmdb_id": tmdb_id,
         "runtime": runtime,
@@ -159,11 +141,9 @@ def tmdb_fetch(title: str):
 
 def lookup_tmdb(title: str):
     cached = tmdb_cache_lookup(title)
-
     director = cached.get("director") or ""
     runtime = cached.get("runtime_min")
     year = cached.get("final_year")
-
     if not director or not runtime or not year:
         api = tmdb_fetch(title)
         if api:
@@ -171,7 +151,6 @@ def lookup_tmdb(title: str):
             runtime = api.get("runtime") or runtime
             year = api.get("year") or year
             tmdb_cache_upsert(title, api.get("tmdb_id"), runtime, director, year)
-
     return {
         "director": director or "",
         "runtime": str(runtime or ""),
@@ -180,47 +159,20 @@ def lookup_tmdb(title: str):
     }
 
 # ================================================================
-# NOTES EXTRACTION (Option D)
+# NOTES EXTRACTION
 # ================================================================
 
 def extract_notes_from_page(page):
-    """
-    Extract programme/season/series names only.
-    Option D: Prefixed when useful, natural phrasing, no noise.
-    """
-
     notes = []
-
-    # 1. Extract visible category / tag labels
     cat_nodes = page.locator(".event-categories, .taxonomy-term")
     for i in range(cat_nodes.count()):
         txt = cat_nodes.nth(i).inner_text().strip()
         if not txt:
             continue
-
-        # Ignore generic categories
         if txt.lower() in ["cinema", "film"]:
             continue
-
-        # Prefix intelligently
-        if "club" in txt.lower() and not txt.lower().startswith("film club"):
-            notes.append(f"Film Club: {txt}")
-        elif "season" in txt.lower():
-            notes.append(txt)
-        elif "festival" in txt.lower():
-            notes.append(txt)
-        else:
-            notes.append(txt)
-
-    # 2. Extract prefix-style titles from og:title
-    title_meta = page.locator('meta[property="og:title"]').get_attribute("content")
-    if title_meta:
-        before = title_meta.split(":")[0].strip()
-        if ("club" in before.lower() or "season" in before.lower()) and before not in notes:
-            notes.append(before)
-
+        notes.append(txt)
     return ", ".join(notes).strip()
-
 
 # ================================================================
 # DATA CLASS
@@ -236,14 +188,12 @@ class ShowTime:
     extra: dict = field(default_factory=dict)
     notes: str = ""
 
-
 # ================================================================
 # SCRAPER
 # ================================================================
 
 def scrape():
     out = []
-
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -260,10 +210,12 @@ def scrape():
             film = browser.new_page()
             film.goto(link)
 
-            title = film.locator('meta[property="og:title"]').get_attribute("content")
-            title = strip_title(title.replace(" - Rich Mix", "").strip())
+            raw_title = film.locator('meta[property="og:title"]').get_attribute("content") or ""
+            raw_title = raw_title.replace(" - Rich Mix", "").strip()
+            title = strip_title(raw_title).replace('"', "").replace("'", "").replace(";", ",").strip()
 
             desc = film.locator('meta[property="og:description"]').get_attribute("content")
+
             tmdb = lookup_tmdb(title)
             notes = extract_notes_from_page(film)
 
@@ -273,7 +225,6 @@ def scrape():
                 continue
 
             days = date_root.locator(".day")
-
             for j in range(days.count()):
                 day = days.nth(j)
                 date_text = day.locator(".weekday, .instance-date").inner_text()
@@ -300,85 +251,16 @@ def scrape():
             film.close()
 
         browser.close()
-
     logging.info(f"Scraped {len(out)} Rich Mix showtimes")
     return out
 
 # ================================================================
-# INCREMENTAL CSV (9 columns, patched)
-# ================================================================
-
-def load_existing():
-    """
-    Load existing rows from the persistent history file.
-    Automatically removes legacy broken rows with double-quoted <a href=""> HTML.
-    Ensures all rows have exactly 9 fields.
-    """
-    if not os.path.exists(CACHE_FILE):
-        return {}
-
-    existing = {}
-
-    with open(CACHE_FILE, "r", encoding="utf-8") as f:
-        reader = csv.reader(f, delimiter=";")
-        next(reader, None)  # skip header
-
-        for row in reader:
-            row = (row + [""] * 9)[:9]
-            date, venue, title_html, director, runtime, fmt, time_str, year, notes = row
-
-            # ❌ PURGE BROKEN OLD EXPORTER ROWS
-            if '<a href=""' in title_html or '""https' in title_html:
-                continue
-
-            # Normalised key
-            key = (date, title_html, time_str)
-            existing[key] = row
-
-    return existing
-
-
-def save_clean(rows):
-    """
-    Clean + sort rows, remove past dates, enforce 9 columns, write back to cache.
-    Blank fields become ' ' (single space) to avoid CMS shifting issues.
-    """
-    today = datetime.date.today()
-    cleaned = []
-
-    for row in rows:
-        row = (row + [""] * 9)[:9]
-
-        try:
-            d = datetime.datetime.strptime(row[0], "%Y-%m-%d").date()
-            if d >= today:
-                cleaned.append(row)
-        except:
-            cleaned.append(row)
-
-    # SORT by date + title
-    cleaned.sort(key=lambda r: (r[0], r[2]))
-
-    # WRITE BACK TO HISTORY
-    with open(CACHE_FILE, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, delimiter=";")
-        writer.writerow([
-            "DATE", "VENUE", "TITLE", "DIRECTOR",
-            "RUNTIME", "FORMAT", "TIME", "YEAR", "NOTES"
-        ])
-        writer.writerows(cleaned)
-
-    return cleaned
-
-
-# ================================================================
-# EXPORT (patched, 9 columns, correct quoting)
+# EXPORT — ALWAYS CLEAN (NO HISTORY)
 # ================================================================
 
 def export_to_semicolon(showtimes, filename=DEFAULT_EXPORT):
     grouped = {}
 
-    # Group by film + date
     for s in showtimes:
         d = s.datetime.strftime("%Y-%m-%d")
         t = s.datetime.strftime("%H:%M")
@@ -394,77 +276,54 @@ def export_to_semicolon(showtimes, filename=DEFAULT_EXPORT):
                 "format": s.extra.get("format", "DCP"),
                 "year": s.extra.get("year", ""),
                 "notes": s.notes,
-                "times": []
+                "times": set(),
             }
 
-        grouped[key]["times"].append(t)
+        grouped[key]["times"].add(t)
 
-    existing = load_existing()
-    updated = dict(existing)
+    sorted_items = sorted(
+        grouped.items(),
+        key=lambda item: (item[1]["date"], item[1]["title"])
+    )
 
-    # Build final rows
-    for (title, date), data in grouped.items():
-        safe_link = normalize_url(data["link"])
-        title_html = f"<a href='{safe_link}'>{data['title']}</a>"  # ALWAYS SINGLE QUOTE
-
-        for t in sorted(set(data["times"])):
-            key = (date, title_html, t)
-
-            row = [
-                clean_field(date),
-                clean_field(CINEMA_NAME),
-                clean_field(title_html),
-                clean_field(data["director"]),
-                clean_field(data["runtime"]),
-                clean_field(data["format"]),
-                clean_field(t),
-                clean_field(data["year"]),
-                clean_field(data["notes"]),
-            ]
-
-            updated[key] = row
-
-    cleaned_rows = save_clean(updated.values())
-
-    # FINAL EXPORT
     with open(filename, "w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter=";")
+
         writer.writerow([
             "DATE", "VENUE", "TITLE", "DIRECTOR",
             "RUNTIME", "FORMAT", "TIME", "YEAR", "NOTES"
         ])
-        writer.writerows(cleaned_rows)
 
-    print(f"✔ Exported {len(cleaned_rows)} Rich Mix rows → {filename}")
+        for (_, data) in sorted_items:
+            safe_link = normalize_url(data["link"])
+            title_html = f"<a href='{safe_link}'>{data['title']}</a>"
 
+            for t in sorted(data["times"]):
+                writer.writerow([
+                    data["date"],
+                    CINEMA_NAME,
+                    title_html,
+                    data["director"],
+                    data["runtime"],
+                    data["format"],
+                    t,
+                    data["year"],
+                    data["notes"],
+                ])
+
+    print(f"✔ Exported Rich Mix rows → {filename}")
 
 # ================================================================
 # MAIN
 # ================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Rich Mix scraper (with NOTES + 9 columns).")
-    parser.add_argument("--clean-only", action="store_true")
+    parser = argparse.ArgumentParser(description="Rich Mix scraper (clean export).")
     parser.add_argument("--outfile", default=DEFAULT_EXPORT)
     args = parser.parse_args()
 
-    # CLEAN-ONLY MODE — purges broken rows and keeps only future screenings
-    if args.clean_only:
-        cleaned = save_clean(load_existing().values())
-        with open(args.outfile, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f, delimiter=";")
-            writer.writerow([
-                "DATE", "VENUE", "TITLE", "DIRECTOR",
-                "RUNTIME", "FORMAT", "TIME", "YEAR", "NOTES"
-            ])
-            writer.writerows(cleaned)
-        print("✔ Cache cleaned.")
-        return
-
-    # NORMAL SCRAPE + MERGE
     showtimes = scrape()
     export_to_semicolon(showtimes, filename=args.outfile)
-
 
 if __name__ == "__main__":
     main()
