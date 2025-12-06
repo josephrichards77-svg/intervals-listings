@@ -195,15 +195,17 @@ document.addEventListener("DOMContentLoaded", function () {
                             <div class="screenings">
                     `;
 
-                    screenings.forEach(s => {
-                        html += `
-                            <div class="screening">
-                                ${s.title}
-                                <div class="details">${s.details}</div>
-                                <div class="time">${s.times.join(", ")}</div>
-                            </div>
-                        `;
-                    });
+                   screenings.forEach(s => {
+    html += `
+        <div class="screening">
+            ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+            <a href="${s.titleLink || '#'}">${s.title}</a>
+            <div class="details">${s.details}</div>
+            <div class="time">${s.times.join(", ")}</div>
+        </div>
+    `;
+});
+
 
                     html += `</div></div>`;
 
