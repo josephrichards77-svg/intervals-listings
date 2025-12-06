@@ -4,6 +4,8 @@ import re
 import csv
 import argparse
 import logging
+import sqlite3
+
 
 import dateparser
 import requests
