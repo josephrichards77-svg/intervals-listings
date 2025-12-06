@@ -1,10 +1,11 @@
+<script>
 document.addEventListener("DOMContentLoaded", function () {
 
     let currentDate = new Date();
 
-    //-------------------------------------------------------
-    // ORDINALS (1st, 2nd, 3rd…)
-    //-------------------------------------------------------
+    // -------------------------------------------------------
+    // ORDINALS
+    // -------------------------------------------------------
     function getOrdinal(n) {
         if (n > 3 && n < 21) return "th";
         switch (n % 10) {
@@ -15,9 +16,9 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     // FULL DATE — Wednesday, November 26th, 2025
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     function formatFullDate(date) {
         const day = date.getDate();
         const suffix = getOrdinal(day);
@@ -31,46 +32,32 @@ document.addEventListener("DOMContentLoaded", function () {
         document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
     }
 
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     // FORMAT NORMALISER
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     function normaliseFormat(fmt) {
-        // Blank, null, undefined, or whitespace → DCP
         if (!fmt || fmt.trim() === "") return "DCP";
 
         let f = fmt.trim().toUpperCase().replace(/\s+/g, "");
 
-        // 4K → DCP
         if (["4K", "4KRESTORATION", "4"].includes(f)) return "DCP";
-
-        // digital variants → DCP
         if (["DIGITAL", "DIG", "HD", "DCP"].includes(f)) return "DCP";
-
-        // 35mm
         if (f === "35MM" || f === "35") return "35mm";
-
-        // 70mm
         if (f === "70MM" || f === "70") return "70mm";
-
-        // 16mm
         if (f === "16MM" || f === "16") return "16mm";
 
-        // fallback
         return fmt.trim();
     }
 
-    //-------------------------------------------------------
-    // TIME NORMALISER → ALWAYS 24h format
-    //-------------------------------------------------------
+    // -------------------------------------------------------
+    // TIME NORMALISER → 24h
+    // -------------------------------------------------------
     function normaliseTime(t) {
         if (!t) return "";
-
         let clean = t.replace(/\./g, "").trim().toUpperCase();
 
-        // Already 24h
         if (/^\d{2}:\d{2}$/.test(clean)) return clean;
 
-        // Match 11:30 AM
         const m = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
         if (!m) return clean;
 
@@ -83,12 +70,11 @@ document.addEventListener("DOMContentLoaded", function () {
         return `${String(hh).padStart(2, "0")}:${mm}`;
     }
 
-    //-------------------------------------------------------
-    // Apply CSS class to last row cards
-    //-------------------------------------------------------
+    // -------------------------------------------------------
+    // LAST ROW FIX
+    // -------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-
             Array.from(screeningsContainer.children).forEach(card => {
                 card.classList.remove('last-row-card');
             });
@@ -102,9 +88,9 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    //-------------------------------------------------------
-    // LOAD LISTINGS FROM GOOGLE SHEETS
-    //-------------------------------------------------------
+    // -------------------------------------------------------
+    // LOAD LISTINGS
+    // -------------------------------------------------------
     function loadListingsFor(date) {
 
         const container = document.getElementById("cinema-listings");
@@ -135,51 +121,50 @@ document.addEventListener("DOMContentLoaded", function () {
                         safe[i] = row[i] || "";
                     }
 
-                   const rowDate  = safe[0];
-const cinema   = safe[1];
+                    const rowDate  = safe[0];
+                    const cinema   = safe[1];
 
-const rawTitle = safe[2].trim();
-let titleText = rawTitle;
-let titleLink = "";
+                    // -------- TITLE + LINK PARSING (NEW) --------
+                    const rawTitle = safe[2].trim();
+                    let titleText = rawTitle;
+                    let titleLink = "";
 
-// Extract link + clean title if CSV contains <a href="...">Title</a>
-const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
-if (m) {
-    titleLink = m[1];
-    titleText = m[2];
-}
+                    const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
+                    if (m) {
+                        titleLink = m[1];
+                        titleText = m[2];
+                    }
 
-const director = safe[3];
-const runtime  = safe[4];
-const format   = normaliseFormat(safe[5]);
-const timeRaw  = safe[6];
-const year     = safe[7];
-const notes    = safe[8];
-
+                    const director = safe[3];
+                    const runtime  = safe[4];
+                    const format   = normaliseFormat(safe[5]);
+                    const timeRaw  = safe[6];
+                    const year     = safe[7];
+                    const notes    = safe[8];
 
                     if (rowDate !== formatted) return;
                     if (!cinema) return;
 
                     if (!data[cinema]) data[cinema] = [];
 
-                    let film = data[cinema].find(f => f.title === title);
+                    let film = data[cinema].find(f => f.title === titleText);
 
-                    // Times
                     let times = timeRaw
                         ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
                         : [];
 
                     if (!film) {
                         film = {
-                            title,
+                            title: titleText,
+                            titleLink,
+                            notes,
                             details: [
                                 director || "",
                                 year || "",
                                 runtime ? (String(runtime).includes("min") ? runtime : runtime + " min") : "",
-                                format,
-                                notes || ""
+                                format
                             ].filter(Boolean).join(", "),
-                            times: times
+                            times
                         };
                         data[cinema].push(film);
                     }
@@ -190,9 +175,9 @@ const notes    = safe[8];
                     return;
                 }
 
-                //-------------------------------------------------------
-                // RENDER
-                //-------------------------------------------------------
+                // -------------------------------------------------------
+                // RENDER CINEMAS
+                // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
                     screenings.sort((a, b) => {
@@ -207,20 +192,18 @@ const notes    = safe[8];
                             <div class="screenings">
                     `;
 
-                   screenings.forEach(s => {
-    html += `
-        <div class="screening">
-            ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-            <a href="${s.titleLink || '#'}">${s.title}</a>
-            <div class="details">${s.details}</div>
-            <div class="time">${s.times.join(", ")}</div>
-        </div>
-    `;
-});
-
+                    screenings.forEach(s => {
+                        html += `
+                            <div class="screening">
+                                ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                                <a href="${s.titleLink || '#'}">${s.title}</a>
+                                <div class="details">${s.details}</div>
+                                <div class="time">${s.times.join(", ")}</div>
+                            </div>
+                        `;
+                    });
 
                     html += `</div></div>`;
-
                     container.innerHTML += html;
                 });
 
@@ -233,9 +216,9 @@ const notes    = safe[8];
             });
     }
 
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     // NAVIGATION
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     document.getElementById("prev-btn").onclick = function () {
         currentDate.setDate(currentDate.getDate() - 1);
         updateCalendar();
@@ -258,10 +241,11 @@ const notes    = safe[8];
         loadListingsFor(currentDate);
     };
 
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     // INITIAL LOAD
-    //-------------------------------------------------------
+    // -------------------------------------------------------
     updateCalendar();
     loadListingsFor(currentDate);
 
 });
+</script>
