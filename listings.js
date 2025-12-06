@@ -1,4 +1,3 @@
-<script>
 document.addEventListener("DOMContentLoaded", function () {
 
     let currentDate = new Date();
@@ -17,7 +16,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // FULL DATE — Wednesday, November 26th, 2025
+    // FULL DATE
     // -------------------------------------------------------
     function formatFullDate(date) {
         const day = date.getDate();
@@ -37,20 +36,19 @@ document.addEventListener("DOMContentLoaded", function () {
     // -------------------------------------------------------
     function normaliseFormat(fmt) {
         if (!fmt || fmt.trim() === "") return "DCP";
-
         let f = fmt.trim().toUpperCase().replace(/\s+/g, "");
 
         if (["4K", "4KRESTORATION", "4"].includes(f)) return "DCP";
         if (["DIGITAL", "DIG", "HD", "DCP"].includes(f)) return "DCP";
-        if (f === "35MM" || f === "35") return "35mm";
-        if (f === "70MM" || f === "70") return "70mm";
-        if (f === "16MM" || f === "16") return "16mm";
+        if (["35", "35MM"].includes(f)) return "35mm";
+        if (["70", "70MM"].includes(f)) return "70mm";
+        if (["16", "16MM"].includes(f)) return "16mm";
 
         return fmt.trim();
     }
 
     // -------------------------------------------------------
-    // TIME NORMALISER → 24h
+    // TIME NORMALISER (AM/PM → 24h)
     // -------------------------------------------------------
     function normaliseTime(t) {
         if (!t) return "";
@@ -75,21 +73,19 @@ document.addEventListener("DOMContentLoaded", function () {
     // -------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-            Array.from(screeningsContainer.children).forEach(card => {
-                card.classList.remove('last-row-card');
-            });
+            Array.from(screeningsContainer.children).forEach(card =>
+                card.classList.remove('last-row-card')
+            );
 
             const children = Array.from(screeningsContainer.children);
-            const lastThree = children.slice(-3);
-
-            lastThree.forEach(card => {
-                card.classList.add('last-row-card');
-            });
+            children.slice(-3).forEach(card =>
+                card.classList.add('last-row-card')
+            );
         });
     }
 
     // -------------------------------------------------------
-    // LOAD LISTINGS
+    // LOAD LISTINGS FROM GOOGLE SHEETS
     // -------------------------------------------------------
     function loadListingsFor(date) {
 
@@ -115,19 +111,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 rows.forEach(row => {
 
-                    // Guarantee 9 safe fields
                     const safe = [];
-                    for (let i = 0; i < 9; i++) {
-                        safe[i] = row[i] || "";
-                    }
+                    for (let i = 0; i < 9; i++) safe[i] = row[i] || "";
 
-                    const rowDate  = safe[0];
-                    const cinema   = safe[1];
+                    const rowDate = safe[0];
+                    const cinema  = safe[1];
 
-                    // -------- TITLE + LINK PARSING (NEW) --------
+                    // -------- TITLE + LINK PARSING --------
                     const rawTitle = safe[2].trim();
-                    let titleText = rawTitle;
-                    let titleLink = "";
+                    let titleText  = rawTitle;
+                    let titleLink  = "";
 
                     const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
                     if (m) {
@@ -176,7 +169,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER CINEMAS
+                // RENDER EACH CINEMA
                 // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
@@ -204,6 +197,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     });
 
                     html += `</div></div>`;
+
                     container.innerHTML += html;
                 });
 
@@ -248,4 +242,3 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
 
 });
-</script>
