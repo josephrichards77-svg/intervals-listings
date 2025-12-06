@@ -39,10 +39,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
         let f = fmt.trim().toUpperCase().replace(/\s+/g, "");
 
-        // 4K → treat as DCP
+        // Treat 4K as DCP
         if (["4K", "4KRESTORATION", "4"].includes(f)) return "DCP";
 
-        // digital equivalents → DCP
+        // Digital variants → DCP
         if (["DIGITAL", "DIG", "HD", "DCP"].includes(f)) return "DCP";
 
         // 35mm
@@ -63,13 +63,11 @@ document.addEventListener("DOMContentLoaded", function () {
     function normaliseTime(t) {
         if (!t) return "";
 
-        // Remove text like "PM", "pm", "am", etc.
         let clean = t.replace(/\./g, "").trim().toUpperCase();
 
-        // If already 24h → return as is
+        // Already 24h format
         if (/^\d{2}:\d{2}$/.test(clean)) return clean;
 
-        // Match 11:30 AM / 8:15PM
         const m = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
         if (!m) return clean;
 
@@ -83,7 +81,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // GUARANTEED FIX: Manually apply class to cards in the final row
+    // GUARANTEED FIX: Mark last row of cards
     // -------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
@@ -128,28 +126,34 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 rows.forEach(row => {
 
-                    if (!row || row.length < 3) return;
+                    if (!row) return;
 
-                    const rowDate  = row[0];
-                    const cinema   = row[1];
-                    const title    = row[2];
-                    const director = row[3];
-                    const runtime  = row[4];
-                    const format   = normaliseFormat(row[5]);
-                    const timeRaw  = row[6];
-                    const year     = row[7];
-                    const notes    = row[8];
+                    // SAFELY EXPAND TO 9 COLUMNS
+                    const safe = [];
+                    for (let i = 0; i < 9; i++) {
+                        safe[i] = row[i] || "";
+                    }
+
+                    const rowDate  = safe[0];
+                    const cinema   = safe[1];
+                    const title    = safe[2];
+                    const director = safe[3];
+                    const runtime  = safe[4];
+                    const format   = normaliseFormat(safe[5]);
+                    const timeRaw  = safe[6];
+                    const year     = safe[7];
+                    const notes    = safe[8];
 
                     if (rowDate !== formatted) return;
                     if (!cinema) return;
 
                     if (!data[cinema]) data[cinema] = [];
 
-                    let film = data[cinema].find(f => f.title === title);
-
                     let times = timeRaw
-                        ? timeRaw.split(",").map(t => normaliseTime(t.trim()))
+                        ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
                         : [];
+
+                    let film = data[cinema].find(f => f.title === title);
 
                     if (!film) {
                         film = {
@@ -173,7 +177,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER 3-column layout
+                // RENDER CARDS
                 // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
