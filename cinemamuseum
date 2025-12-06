@@ -1,0 +1,285 @@
+import asyncio
+import re
+import json
+import os
+import requests
+import sqlite3
+from datetime import datetime
+from bs4 import BeautifulSoup
+
+from playwright.async_api import async_playwright
+
+from intervals_cleaning import normalise_row, merge_rows, export_rows
+
+# ================================================================
+# CONFIG
+# ================================================================
+
+CM_URL = "https://www.cinemamuseum.org.uk/category/events/"
+OUTPUT_FILE = "cinema_museum.txt"
+TMDB_DB = "tmdb_cache.db"
+
+CINEMA_NAME = "Cinema Museum"
+DEFAULT_FORMAT = "Digital"
+
+TMDB_API_KEY = "63ca1bc21617054972b7bc2c64db096b"
+TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
+
+# ================================================================
+# TMDB CACHE / LOOKUP
+# ================================================================
+
+def tmdb_cache_lookup(title, year_hint):
+    conn = sqlite3.connect(TMDB_DB)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT * FROM tmdb_cache
+        WHERE title = ? AND (year_hint = ? OR (year_hint IS NULL AND ? IS NULL))
+    """, (title, year_hint, year_hint))
+
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def tmdb_cache_upsert(title, year_hint, tmdb_id, runtime, director, final_year):
+    conn = sqlite3.connect(TMDB_DB)
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO tmdb_cache
+        (title, year_hint, tmdb_id, runtime_min, director, final_year, last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(title, year_hint) DO UPDATE SET
+            tmdb_id=excluded.tmdb_id,
+            runtime_min=excluded.runtime_min,
+            director=excluded.director,
+            final_year=excluded.final_year,
+            last_updated=datetime('now')
+    """, (
+        title,
+        year_hint,
+        tmdb_id,
+        runtime,
+        director,
+        final_year
+    ))
+    conn.commit()
+    conn.close()
+
+
+def extract_year(text):
+    m = re.search(r"(19|20)\d{2}", text or "")
+    return m.group(0) if m else None
+
+
+def clean_title(title):
+    """Strip trailing parentheses etc."""
+    return re.sub(r"\s*\(.*?\)$", "", title).strip()
+
+
+def tmdb_search(title, year_hint=None):
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": title,
+        "include_adult": "false",
+    }
+    if year_hint:
+        params["year"] = year_hint
+
+    try:
+        resp = requests.get(TMDB_SEARCH_URL, params=params, timeout=10).json()
+    except:
+        return None
+
+    results = resp.get("results", [])
+    if not results:
+        return None
+
+    return results[0]  # best match
+
+
+def tmdb_enrich(tmdb_id):
+    enriched = {}
+
+    try:
+        d = requests.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+            params={"api_key": TMDB_API_KEY},
+            timeout=10
+        ).json()
+        enriched["runtime"] = d.get("runtime")
+        date = d.get("release_date") or ""
+        enriched["year_final"] = date[:4] if len(date) >= 4 else ""
+    except:
+        pass
+
+    try:
+        c = requests.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
+            params={"api_key": TMDB_API_KEY},
+            timeout=10
+        ).json()
+
+        directors = [x["name"] for x in c.get("crew", []) if x.get("job") == "Director"]
+        enriched["director"] = ", ".join(directors) if directors else ""
+    except:
+        pass
+
+    return enriched
+
+
+def lookup_tmdb(title_raw):
+    """Cache-first TMDB lookup with fuzzy title support."""
+    title_clean = clean_title(title_raw)
+    year_hint = extract_year(title_raw)
+
+    cached = tmdb_cache_lookup(title_clean, year_hint)
+    if cached:
+        return {
+            "director": cached.get("director", ""),
+            "runtime": str(cached.get("runtime_min") or ""),
+            "year": cached.get("final_year") or "",
+            "format": DEFAULT_FORMAT,
+        }
+
+    search = tmdb_search(title_clean, year_hint)
+    if not search:
+        return {"director": "", "runtime": "", "year": "", "format": DEFAULT_FORMAT}
+
+    tmdb_id = search.get("id")
+
+    enriched = tmdb_enrich(tmdb_id)
+
+    tmdb_cache_upsert(
+        title_clean,
+        year_hint,
+        tmdb_id,
+        enriched.get("runtime"),
+        enriched.get("director"),
+        enriched.get("year_final"),
+    )
+
+    return {
+        "director": enriched.get("director", ""),
+        "runtime": str(enriched.get("runtime") or ""),
+        "year": enriched.get("year_final", ""),
+        "format": DEFAULT_FORMAT,
+    }
+
+# ================================================================
+# PLAYWRIGHT FETCH
+# ================================================================
+
+async def fetch_html():
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(CM_URL, timeout=60000)
+        html = await page.content()
+        await browser.close()
+        return html
+
+
+# ================================================================
+# PARSE CINEMA MUSEUM HTML
+# ================================================================
+
+def parse_screenings(html):
+    soup = BeautifulSoup(html, "html.parser")
+    posts = soup.select("article")
+
+    screenings = []
+
+    date_re = re.compile(r"(\d{1,2}\s+[A-Za-z]+\s+\d{4})")
+    time_re = re.compile(r"\b(\d{1,2}:\d{2})\b")
+
+    for post in posts:
+        h2 = post.find("h2")
+        if not h2:
+            continue
+
+        a = h2.find("a")
+        if not a:
+            continue
+
+        title = a.get_text(strip=True)
+        url = a["href"]
+
+        block = post.get_text(" ", strip=True)
+
+        date_match = date_re.search(block)
+        if not date_match:
+            continue
+
+        try:
+            dt = datetime.strptime(date_match.group(1), "%d %B %Y")
+        except:
+            continue
+
+        date_iso = dt.strftime("%Y-%m-%d")
+        times = time_re.findall(block)
+        if not times:
+            continue
+
+        for t in times:
+            screenings.append({
+                "title": title,
+                "url": url,
+                "date": date_iso,
+                "time": t,
+            })
+
+    return screenings
+
+
+# ================================================================
+# EXPORT WITH intervals_cleaning
+# ================================================================
+
+def export_with_cleaner(screenings, filename=OUTPUT_FILE):
+    rows = []
+
+    for s in screenings:
+        tmdb = lookup_tmdb(s["title"])
+
+        raw_row = {
+            "venue": CINEMA_NAME,
+            "date": s["date"],
+            "title": f"<a href='{s['url']}'>{s['title']}</a>",
+            "director": tmdb["director"],
+            "runtime_min": tmdb["runtime"],
+            "format": tmdb["format"],
+            "times": [s["time"]],
+            "year": tmdb["year"],
+            "extra": "Cinema Museum",
+            "url": s["url"],
+        }
+
+        normal = normalise_row(raw_row)
+        merge_rows(rows, normal)
+
+    body = export_rows(rows)
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("DATE;VENUE;TITLE;DIRECTOR;RUNTIME;FORMAT;TIME;YEAR;NOTES\n")
+        if body:
+            f.write(body)
+            if not body.endswith("\n"):
+                f.write("\n")
+
+    print(f"✔ Exported {len(rows)} Cinema Museum rows → {filename}")
+
+
+# ================================================================
+# MAIN
+# ================================================================
+
+async def scrape_cinema_museum():
+    html = await fetch_html()
+    parsed = parse_screenings(html)
+    export_with_cleaner(parsed)
+
+if __name__ == "__main__":
+    asyncio.run(scrape_cinema_museum())
