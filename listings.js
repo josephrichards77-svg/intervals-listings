@@ -30,24 +30,49 @@ document.addEventListener("DOMContentLoaded", function () {
     function updateCalendar() {
         document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
     }
-    
+
     // -------------------------------------------------------
-    // GUARANTEED FIX: Manually apply class to cards in the final row
+    // TIME NORMALISER — convert anything → "HH:MM" 24h
+    // -------------------------------------------------------
+    function normaliseTime(t) {
+        if (!t) return "";
+
+        // Try direct parse: handles "2:15 PM", "14:30", "8 pm"
+        let d = new Date("2000-01-01 " + t);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+        }
+
+        // Fix formats like "8pm" → "8 pm"
+        const fixed = t.replace(/(\d)(am|pm)/i, "$1 $2");
+
+        d = new Date("2000-01-01 " + fixed);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+        }
+
+        // If completely unparseable, return original but trimmed
+        return t.trim();
+    }
+
+    // -------------------------------------------------------
+    // GUARANTEED FIX: Apply class to final row cards
     // -------------------------------------------------------
     function applyLastRowFix() {
-        // Select all container elements with the class 'screenings'
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-            
-            // 1. Remove the class from all children first to reset the state
             Array.from(screeningsContainer.children).forEach(card => {
                 card.classList.remove('last-row-card');
             });
 
-            // 2. Apply the class to the last 3 children (The number of columns on desktop)
             const children = Array.from(screeningsContainer.children);
-            // Use slice(-3) to target the last three elements regardless of total count
             const lastThree = children.slice(-3);
-            
+
             lastThree.forEach(card => {
                 card.classList.add('last-row-card');
             });
@@ -62,10 +87,8 @@ document.addEventListener("DOMContentLoaded", function () {
         const container = document.getElementById("cinema-listings");
         container.innerHTML = "";
 
-        // Format date to match Python output (YYYY-MM-DD)
         const formatted = date.toISOString().split("T")[0];
 
-        // NOTE: The Google Sheets API Key and Sheet ID must be correct here.
         const url =
             "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
@@ -82,68 +105,45 @@ document.addEventListener("DOMContentLoaded", function () {
                 const data = {};
 
                 rows.forEach(row => {
-
-                    // Ensure row has at least 3 elements before mapping
                     if (!row || row.length < 3) return;
 
-                    // 🔴 CRITICAL FIX: Explicitly map ALL 9 columns (row[0] to row[8])
-                    // This ensures correct column assignment even if intermediate fields are empty.
-                    const rowDate  = row[0];
-                    const cinema   = row[1];
-                    const title    = row[2]; // Contains the full HTML link <a>Title</a>
+                    const rowDate  = row[0];
+                    const cinema   = row[1];
+                    const title    = row[2];
                     const director = row[3];
-                    const runtime  = row[4]; // Guaranteed to be "" or a number
-                    const format   = row[5];
-                    const timeRaw  = row[6];  // Comma-separated times (e.g., "9:00 PM, 11:00 PM")
-                    const year     = row[7];  // The year
-                    const notes    = row[8];  // Any extra notes (must be mapped!)
-
+                    const runtime  = row[4];
+                    const format   = row[5];
+                    const timeRaw  = row[6];
+                    const year     = row[7];
+                    const notes    = row[8];
 
                     if (rowDate !== formatted) return;
                     if (!cinema) return;
-                    
-                    // Note: Skipping the old time normalisation logic as Python ensures clean time strings.
 
                     if (!data[cinema]) data[cinema] = [];
 
-                    // find any existing film entry under this cinema
                     let film = data[cinema].find(f => f.title === title);
 
-                    // if none, create new entry
                     if (!film) {
                         film = {
                             title,
-                            
-                            // 🔴 CRITICAL FIX: Combine metadata robustly
-                            // Use .filter(Boolean) to ignore any fields that are empty strings ("")
                             details: [
-                                director || "", 
-                                year || "",     
-                                
-                                // Runtime: Only include if present, append " min" if it doesn't have it
+                                director || "",
+                                year || "",
                                 runtime ? (String(runtime).includes("min") ? runtime : runtime + " min") : "",
-                                
-                                format || "",   
-                                notes || ""     // Display notes here, if necessary
+                                format || "",
+                                notes || ""
                             ].filter(Boolean).join(", "),
-                            
-                            // Times are split into a list for sorting and clean joining later
-                            times: timeRaw ? timeRaw.split(',').map(t => t.trim()) : [],
+                            times: timeRaw
+                                ? timeRaw
+                                    .split(',')
+                                    .map(t => normaliseTime(t.trim()))
+                                    .filter(Boolean)
+                                : [],
                         };
+
                         data[cinema].push(film);
                     }
-
-                    // The logic below ensures that if the Python cleaner was skipped, 
-                    // and two rows exist for the same film/date, their times are merged.
-                    // If the Python cleaner is working, this block is largely redundant but safe.
-                    /*
-                    if (timeRaw && film.times.indexOf(timeRaw) === -1) {
-                         // This is where merging would happen if the time column was a single time.
-                         // Since the time column is now comma-separated from the Python cleaner, 
-                         // the merging happens implicitly by the row structure above.
-                    }
-                    */
-
                 });
 
                 if (Object.keys(data).length === 0) {
@@ -152,11 +152,10 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER: nice 3-column cards
+                // RENDER
                 // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
-                    // sort by first screening time
                     screenings.sort((a, b) => {
                         const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
                         const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
@@ -184,9 +183,6 @@ document.addEventListener("DOMContentLoaded", function () {
                     container.innerHTML += html;
                 });
 
-                // -------------------------------------------------------
-                // 🔥 FIX: Apply the CSS removal class to the final row cards
-                // -------------------------------------------------------
                 applyLastRowFix();
 
             })
