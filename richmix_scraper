@@ -44,17 +44,16 @@ def normalize_url(href: str) -> str:
         return BASE_URL + href
     return BASE_URL + "/" + href
 
-
-def strip_title(title: str) -> str:
-    rating_re = re.compile(r"\b(U|PG|12A|12|15|18)\b$", re.IGNORECASE)
-    return rating_re.sub("", title).strip()
-
-
 def clean_field(x):
-    """Guarantee CSV-safe value: strip whitespace, None -> ''. """
+    """Ensure CSV-friendly fields."""
     if x is None:
         return ""
     return str(x).strip()
+
+def strip_title(title: str) -> str:
+    """Remove BBFC ratings from the end."""
+    rating_re = re.compile(r"\b(U|PG|12A|12|15|18)\b$", re.IGNORECASE)
+    return rating_re.sub("", title).strip()
 
 
 # ================================================================
@@ -65,41 +64,33 @@ _tmdb_conn = None
 
 def get_tmdb_conn():
     global _tmdb_conn
-    db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
-    if not os.path.exists(db_path):
+    path = os.path.join(HERE, TMDB_DB_FILENAME)
+    if not os.path.exists(path):
         return None
     if _tmdb_conn is None:
-        _tmdb_conn = sqlite3.connect(db_path)
+        _tmdb_conn = sqlite3.connect(path)
         _tmdb_conn.row_factory = sqlite3.Row
     return _tmdb_conn
-
 
 def tmdb_cache_lookup(title: str):
     conn = get_tmdb_conn()
     if conn is None:
         return {}
-
     cur = conn.cursor()
-
-    cur.execute("""
-        SELECT * FROM tmdb_cache
-        WHERE LOWER(title) = LOWER(?)
-    """, (title,))
-    row = cur.fetchone()
-    return dict(row) if row else {}
-
+    cur.execute("SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)", (title,))
+    r = cur.fetchone()
+    return dict(r) if r else {}
 
 def tmdb_cache_upsert(title, tmdb_id, runtime, director, final_year):
     conn = get_tmdb_conn()
     if not conn:
         return
 
-    cur = conn.cursor()
     ts = datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds")
+    cur = conn.cursor()
 
     cur.execute("""
-        INSERT INTO tmdb_cache
-          (title, tmdb_id, runtime_min, director, final_year, last_updated)
+        INSERT INTO tmdb_cache (title, tmdb_id, runtime_min, director, final_year, last_updated)
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(title) DO UPDATE SET
             tmdb_id=excluded.tmdb_id,
@@ -111,7 +102,6 @@ def tmdb_cache_upsert(title, tmdb_id, runtime, director, final_year):
 
     conn.commit()
 
-
 def tmdb_fetch(title: str):
     if not TMDB_API_KEY:
         return {}
@@ -122,9 +112,8 @@ def tmdb_fetch(title: str):
             params={"api_key": TMDB_API_KEY, "query": title},
             timeout=10
         ).json()
-        results = r.get("results") or []
-    except Exception as e:
-        logging.warning(f"TMDB search failed for {title}: {e}")
+        results = r.get("results", [])
+    except:
         return {}
 
     if not results:
@@ -133,17 +122,14 @@ def tmdb_fetch(title: str):
     best = results[0]
     tmdb_id = best["id"]
 
-    try:
-        det = requests.get(
-            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
-            params={"api_key": TMDB_API_KEY},
-            timeout=10
-        ).json()
-    except:
-        return {}
+    det = requests.get(
+        f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+        params={"api_key": TMDB_API_KEY},
+        timeout=10
+    ).json()
 
     runtime = det.get("runtime")
-    release_date = det.get("release_date") or ""
+    release_date = det.get("release_date", "")
     year = int(release_date[:4]) if len(release_date) >= 4 else ""
 
     director = ""
@@ -167,7 +153,6 @@ def tmdb_fetch(title: str):
         "year": year,
     }
 
-
 def lookup_tmdb(title: str):
     cached = tmdb_cache_lookup(title)
 
@@ -181,24 +166,64 @@ def lookup_tmdb(title: str):
             director = api.get("director") or director
             runtime = api.get("runtime") or runtime
             year = api.get("year") or year
-            tmdb_cache_upsert(
-                title,
-                api.get("tmdb_id"),
-                runtime,
-                director,
-                year
-            )
+            tmdb_cache_upsert(title, api.get("tmdb_id"), runtime, director, year)
 
     return {
         "director": director or "",
-        "runtime": str(runtime) if runtime else "",
+        "runtime": str(runtime or ""),
         "year": year or "",
         "format": "DCP",
     }
 
 
 # ================================================================
-# DATACLASS
+# NOTES EXTRACTION (Option D)
+# ================================================================
+
+def extract_notes_from_page(page):
+    """
+    Extract programme/season/series names only.
+    Option D: Prefixed when useful, natural phrasing, no noise.
+    """
+
+    notes = []
+
+    # 1. Extract category/tag labels
+    cat_nodes = page.locator(".event-categories, .taxonomy-term")
+    for i in range(cat_nodes.count()):
+        txt = cat_nodes.nth(i).inner_text().strip()
+        if not txt:
+            continue
+
+        # Ignore generic categories like "Cinema"
+        if txt.lower() in ["cinema", "film"]:
+            continue
+
+        # Add prefixes only when useful
+        if "club" in txt.lower():
+            notes.append(f"Film Club: {txt}")
+        elif "season" in txt.lower():
+            notes.append(txt)  # already descriptive
+        elif "festival" in txt.lower():
+            notes.append(txt)
+        else:
+            # Series name like "Kids Kino Club"
+            notes.append(txt)
+
+    # 2. Title prefix pattern: "Film Club: NAME – Rich Mix"
+    title_meta = page.locator('meta[property="og:title"]').get_attribute("content")
+    if title_meta:
+        if ":" in title_meta:
+            possible = title_meta.split(":")[0].strip()
+            if ("club" in possible.lower() or "season" in possible.lower()) and possible not in notes:
+                notes.append(possible)
+
+    # Return combined notes as a single string
+    return ", ".join(notes).strip()
+
+
+# ================================================================
+# DATA CLASS
 # ================================================================
 
 @dataclass
@@ -209,6 +234,7 @@ class ShowTime:
     img: str
     desc: str
     extra: dict = field(default_factory=dict)
+    notes: str = ""
 
 
 # ================================================================
@@ -221,18 +247,15 @@ def scrape():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(URL)
 
+        page.goto(URL)
         articles = page.locator("section#articles article")
 
         for i in range(articles.count()):
             fd = articles.nth(i)
 
-            img_a = fd.locator("div.post-image > a")
-            raw_link = img_a.get_attribute("href")
+            raw_link = fd.locator("div.post-image a").get_attribute("href")
             link = normalize_url(raw_link)
-
-            img_src = img_a.locator("img").get_attribute("src")
 
             film = browser.new_page()
             film.goto(link)
@@ -242,23 +265,25 @@ def scrape():
 
             desc = film.locator('meta[property="og:description"]').get_attribute("content")
 
-            dates_root = film.locator("#dates-and-times")
-            if dates_root.count() == 0:
+            tmdb = lookup_tmdb(title)
+            notes = extract_notes_from_page(film)
+
+            date_root = film.locator("#dates-and-times")
+            if date_root.count() == 0:
                 film.close()
                 continue
 
-            days = dates_root.locator("div.day")
-
-            tmdb = lookup_tmdb(title)
+            days = date_root.locator(".day")
 
             for j in range(days.count()):
                 day = days.nth(j)
-                date_str = day.locator("div.weekday, div.instance-date").inner_text()
-                date_obj = dateparser.parse(date_str).date()
+                date_text = day.locator(".weekday, .instance-date").inner_text()
+                date_obj = dateparser.parse(date_text).date()
 
                 times = day.locator(".times a.time")
                 for k in range(times.count()):
-                    time_obj = dateparser.parse(times.nth(k).inner_text()).time()
+                    t_text = times.nth(k).inner_text()
+                    time_obj = dateparser.parse(t_text).time()
                     dt = datetime.datetime.combine(date_obj, time_obj)
 
                     out.append(
@@ -266,9 +291,10 @@ def scrape():
                             title=title,
                             link=link,
                             datetime=dt,
-                            img=img_src,
+                            img="",
                             desc=desc,
                             extra=tmdb,
+                            notes=notes,
                         )
                     )
 
@@ -281,46 +307,31 @@ def scrape():
 
 
 # ================================================================
-# INCREMENTAL CACHE (9 columns)
+# INCREMENTAL CSV (9 columns)
 # ================================================================
 
 def load_existing():
     if not os.path.exists(CACHE_FILE):
         return {}
-
     existing = {}
     with open(CACHE_FILE, "r", encoding="utf-8") as f:
         reader = csv.reader(f, delimiter=";")
         next(reader, None)
-
         for row in reader:
-            if len(row) < 9:
-                row = row + [""] * (9 - len(row))
-            elif len(row) > 9:
-                row = row[:9]
-
+            row = (row + [""] * 9)[:9]
             date, venue, title_html, director, runtime, fmt, time_str, year, notes = row
             key = (date, title_html, time_str)
             existing[key] = row
-
-    logging.info(f"Loaded {len(existing)} rows from cache")
     return existing
-
 
 def save_clean(rows):
     today = datetime.date.today()
     cleaned = []
-
     for row in rows:
-        if len(row) < 9:
-            row = row + [""] * (9 - len(row))
-        elif len(row) > 9:
-            row = row[:9]
-
-        date = row[0]
+        row = (row + [""] * 9)[:9]
         try:
-            d_obj = datetime.datetime.strptime(date, "%Y-%m-%d").date()
-            if d_obj >= today:
+            d = datetime.datetime.strptime(row[0], "%Y-%m-%d").date()
+            if d >= today:
                 cleaned.append(row)
         except:
             cleaned.append(row)
@@ -328,55 +339,52 @@ def save_clean(rows):
     cleaned.sort(key=lambda r: (r[0], r[2]))
 
     with open(CACHE_FILE, "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f, delimiter=";")
-        w.writerow([
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow([
             "DATE", "VENUE", "TITLE", "DIRECTOR",
             "RUNTIME", "FORMAT", "TIME", "YEAR", "NOTES"
         ])
-        w.writerows(cleaned)
+        writer.writerows(cleaned)
 
     return cleaned
 
 
 # ================================================================
-# EXPORT (9 columns + HTML single-quote fix)
+# EXPORT (9 columns + NOTES + single-quote HTML)
 # ================================================================
 
 def export_to_semicolon(showtimes, filename=DEFAULT_EXPORT):
     grouped = {}
 
     for s in showtimes:
-        date = s.datetime.strftime("%Y-%m-%d")
-        time_str = s.datetime.strftime("%H:%M")
-        key = (s.title, date)
+        d = s.datetime.strftime("%Y-%m-%d")
+        t = s.datetime.strftime("%H:%M")
+        key = (s.title, d)
 
         if key not in grouped:
             grouped[key] = {
                 "title": s.title,
                 "link": s.link,
-                "date": date,
+                "date": d,
                 "director": s.extra.get("director", ""),
                 "runtime": s.extra.get("runtime", ""),
                 "format": s.extra.get("format", "DCP"),
                 "year": s.extra.get("year", ""),
-                "notes": "",
-                "times": [],
+                "notes": s.notes,
+                "times": []
             }
 
-        grouped[key]["times"].append(time_str)
+        grouped[key]["times"].append(t)
 
     existing = load_existing()
     updated = dict(existing)
 
     for (title, date), data in grouped.items():
         safe_link = normalize_url(data["link"])
-
-        # 🔥 FIX: single quotes in HTML attribute
         title_html = f"<a href='{safe_link}'>{data['title']}</a>"
 
         for t in sorted(set(data["times"])):
             key = (date, title_html, t)
-
             row = [
                 clean_field(date),
                 clean_field(CINEMA_NAME),
@@ -388,21 +396,19 @@ def export_to_semicolon(showtimes, filename=DEFAULT_EXPORT):
                 clean_field(data["year"]),
                 clean_field(data["notes"]),
             ]
-
             updated[key] = row
 
     cleaned_rows = save_clean(updated.values())
 
     with open(filename, "w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f, delimiter=";")
-        w.writerow([
+        writer = csv.writer(f, delimiter=";")
+        writer.writerow([
             "DATE", "VENUE", "TITLE", "DIRECTOR",
             "RUNTIME", "FORMAT", "TIME", "YEAR", "NOTES"
         ])
-        w.writerows(cleaned_rows)
+        writer.writerows(cleaned_rows)
 
-    print(f"✔ Updated CSV ({len(cleaned_rows)} rows)")
-    print(f"✔ Exported → {filename}")
+    print(f"✔ Exported {len(cleaned_rows)} Rich Mix rows → {filename}")
 
 
 # ================================================================
@@ -410,24 +416,21 @@ def export_to_semicolon(showtimes, filename=DEFAULT_EXPORT):
 # ================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Rich Mix scraper (incremental + 9 columns).")
-    parser.add_argument("--clean-only", action="true", help="Clean cache only, no scrape.")
+    parser = argparse.ArgumentParser(description="Rich Mix scraper (with NOTES + 9 columns).")
+    parser.add_argument("--clean-only", action="store_true")
     parser.add_argument("--outfile", default=DEFAULT_EXPORT)
     args = parser.parse_args()
 
     if args.clean_only:
-        if not os.path.exists(CACHE_FILE):
-            print("No cache exists yet.")
-            return
         cleaned = save_clean(load_existing().values())
         with open(args.outfile, "w", encoding="utf-8", newline="") as f:
-            w = csv.writer(f, delimiter=";")
-            w.writerow([
+            writer = csv.writer(f, delimiter=";")
+            writer.writerow([
                 "DATE", "VENUE", "TITLE", "DIRECTOR",
                 "RUNTIME", "FORMAT", "TIME", "YEAR", "NOTES"
             ])
-            w.writerows(cleaned)
-        print("✔ Clean only completed.")
+            writer.writerows(cleaned)
+        print("✔ Cache cleaned.")
         return
 
     showtimes = scrape()
