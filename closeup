@@ -1,0 +1,356 @@
+# close_up_scraper.py
+
+import os
+import re
+import html
+from datetime import datetime
+
+from playwright.sync_api import sync_playwright
+
+from intervals_cleaning import clean, normalise_row, merge_rows, export_rows
+from tmdb_cache import tmdb_get_metadata
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+CINEMA_NAME = "Close-Up Film Centre"
+BASE_URL = "https://www.closeupfilmcentre.com"
+URL = f"{BASE_URL}/film_programmes/"
+OUTPUT_FILE = "close_up.txt"
+
+DATE_RE = re.compile(r".*(\d{2}\.\d{2}\.\d{2})$")
+META_LINE_RE = re.compile(
+    r"""
+    ^\s*
+    (?P<director>[^,]+?)      # director
+    \s*,\s*
+    (?P<year>\d{4})           # year
+    \s*,\s*
+    (?P<runtime>\d+)\s*min    # runtime in minutes
+    (?:\s*,\s*(?P<format>.+))?  # optional ", Digital" or other format
+    \s*$
+    """,
+    re.VERBOSE,
+)
+
+# Prefix like "6 December 2025: Title" that we want to strip
+DATE_PREFIX_RE = re.compile(r"^\s*\d{1,2}\s+\w+\s+\d{4}\s*:")
+
+
+# ============================================================
+# HELPER: LOAD EXISTING (INCREMENTAL)
+# ============================================================
+
+def load_existing():
+    """Load existing close_up.txt into a list of normalised row dicts."""
+    if not os.path.exists(OUTPUT_FILE):
+        return []
+
+    rows = []
+    with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            parts = line.split(";")
+            # Ensure we always have 9 columns
+            parts += [""] * (9 - len(parts))
+            date, venue, title, director, runtime, fmt, times_str, year, notes = parts[:9]
+
+            times = [t.strip() for t in times_str.split(",") if t.strip()] if times_str else []
+
+            row = {
+                "venue": venue,
+                "date": date,
+                "title": title,
+                "director": director,
+                "runtime_min": runtime,
+                "format": fmt,
+                "times": times,
+                "year": year,
+                "extra": notes,
+                "url": "",
+            }
+            rows.append(normalise_row(row))
+
+    return rows
+
+
+# ============================================================
+# HELPER: SAVE / EXPORT
+# ============================================================
+
+def save_output(rows):
+    text = export_rows(rows)
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write(text + "\n")
+    print(f"Saved {len(rows)} rows → {OUTPUT_FILE}")
+
+
+def merge_all(existing, new_rows):
+    merged = list(existing)
+    for r in new_rows:
+        merge_rows(merged, r)
+    return merged
+
+
+# ============================================================
+# METADATA EXTRACTION FROM FILM PAGE
+# ============================================================
+
+def extract_film_metadata(page):
+    """
+    Extracts metadata like:
+        'Stanley Kubrick, 1968, 143 min'
+    optionally followed (same or next line) by 'Digital' etc.
+    """
+
+    selectors = [
+        "div.inner_block_2 p",    # typical metadata line
+        "div.inner_block_2",      # fallback
+        "div.inner_block_3_r p",  # alternative layout
+        "div.inner_block_3_r",    # very loose
+        "p",                      # last-ditch fallback
+    ]
+
+    text = ""
+    for sel in selectors:
+        block = page.locator(sel)
+        if block.count() > 0:
+            try:
+                raw = block.first.text_content().strip()
+                if raw:
+                    # normalise whitespace, join multi-line into one
+                    raw = re.sub(r"\s+", " ", raw)
+                    if "min" in raw and "," in raw:
+                        text = raw
+                        break
+            except Exception:
+                continue
+
+    if not text:
+        # Let TMDB fill what it can
+        return {
+            "director": "",
+            "year": "",
+            "runtime_min": "",
+            "format": "",
+        }
+
+    m = META_LINE_RE.match(text)
+    if not m:
+        # Could not parse reliably, hand off to TMDB
+        return {
+            "director": "",
+            "year": "",
+            "runtime_min": "",
+            "format": "",
+        }
+
+    director = clean(m.group("director"))
+    year = clean(m.group("year"))
+    runtime = clean(m.group("runtime"))
+    fmt = clean(m.group("format") or "Digital")
+
+    return {
+        "director": director,
+        "year": year,
+        "runtime_min": runtime,
+        "format": fmt,
+    }
+
+
+# ============================================================
+# MAIN SCRAPER
+# ============================================================
+
+def scrape_closeup():
+    """
+    Scrape Close-Up film_programmes listings into normalised row dicts.
+
+    Key points:
+      - Use the REAL film page link from each calendar row.
+      - Extract metadata from that film page.
+      - Wrap title as <a href="FILM_PAGE" target="_blank">Title</a>.
+      - Only fall back to TMDB if Close-Up metadata is missing.
+    """
+    final_rows = []
+    meta_cache = {}  # film_link → metadata dict
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(URL, wait_until="networkidle")
+
+        film_divs = page.locator("div.inner_block_3")
+        count = film_divs.count()
+        print(f"Found {count} programme blocks on Close-Up page")
+
+        for i in range(count):
+            print(f"Programme {i+1}/{count} ({CINEMA_NAME})")
+            fd = film_divs.nth(i)
+            inner_block_l = fd.locator("div.inner_block_3_l")
+            inner_block_r = fd.locator("div.inner_block_3_r")
+
+            if inner_block_l.count() < 1 or inner_block_r.count() < 1:
+                continue
+
+            # Image (mainly for future use; not needed in txt)
+            img = inner_block_l.locator("a > img")
+            if img.count() > 0:
+                img_src = img.first.get_attribute("src")
+                if img_src and img_src.startswith("/"):
+                    img_src = BASE_URL + img_src
+            else:
+                img_src = ""
+
+            # Programme-level link (fallback)
+            header_a = inner_block_r.locator("h2 > a")
+            prog_link = None
+            if header_a.count() > 0:
+                prog_link = header_a.first.get_attribute("href")
+                if prog_link and prog_link.startswith("/"):
+                    prog_link = BASE_URL + prog_link
+
+            if not prog_link:
+                # If no programme link, skip
+                continue
+
+            # Open programme page to get calendar
+            prog_page = browser.new_page()
+            prog_page.goto(prog_link, wait_until="networkidle")
+
+            table = prog_page.locator("div.booking_calender table")
+            if table.count() == 0:
+                print(f"  → No calendar found, skipping programme: {prog_link}")
+                prog_page.close()
+                continue
+
+            rows = table.locator("tr#row")
+            row_count = rows.count()
+            print(f"  → {row_count} calendar rows")
+
+            for j in range(row_count):
+                row = rows.nth(j)
+                cells = row.locator("td")
+                if cells.count() != 4:
+                    continue
+
+                # ---- Title + real film link from first cell ----
+                cell0 = cells.nth(0)
+                link_el = cell0.locator("a")
+                if link_el.count() > 0:
+                    film_href = link_el.first.get_attribute("href")
+                    raw_title = link_el.first.text_content().strip()
+                else:
+                    film_href = prog_link
+                    raw_title = cell0.text_content().strip()
+
+                if not raw_title:
+                    continue
+
+                # Strip any leading "6 December 2025:" prefix, if present
+                if DATE_PREFIX_RE.match(raw_title):
+                    raw_title = raw_title.split(":", 1)[1].strip()
+
+                # Normalise title text (fix ALL CAPS etc., but preserve HTML)
+                nice_title = clean(raw_title)
+
+                # Build absolute film link
+                if film_href and film_href.startswith("/"):
+                    film_link = BASE_URL + film_href
+                else:
+                    film_link = film_href or prog_link
+
+                # Wrap title as hyperlink
+                title_html = f'<a href="{film_link}" target="_blank">{html.escape(nice_title)}</a>'
+
+                # ---- Date ----
+                date_text = cells.nth(1).text_content() or ""
+                date_text = date_text.strip()
+                m = DATE_RE.match(date_text)
+                if not m:
+                    print(f"    ! Could not parse date: {date_text!r}")
+                    continue
+                date_str = m.group(1)  # dd.mm.yy
+
+                # ---- Time ----
+                raw_time = (cells.nth(2).text_content() or "").strip()
+                if not raw_time:
+                    continue
+
+                # Normalise time to 24h "HH:MM"
+                time_24 = raw_time
+                try:
+                    dt_time = datetime.strptime(raw_time, "%I:%M %p")
+                    time_24 = dt_time.strftime("%H:%M")
+                except Exception:
+                    # If parsing fails, leave as-is
+                    pass
+
+                # ---- Parse metadata from film page (or cache) ----
+                if film_link in meta_cache:
+                    meta = meta_cache[film_link]
+                else:
+                    film_page = browser.new_page()
+                    film_page.goto(film_link, wait_until="networkidle")
+                    meta = extract_film_metadata(film_page)
+                    film_page.close()
+                    meta_cache[film_link] = meta
+
+                director = meta.get("director", "")
+                year = meta.get("year", "")
+                runtime = meta.get("runtime_min", "")
+                fmt = meta.get("format", "")
+
+                # ---- TMDB fallback only if CU metadata missing ----
+                if not director or not runtime or not year:
+                    tmdb = tmdb_get_metadata(nice_title, year_hint=year or None)
+                    director = director or tmdb.get("director", "")
+                    runtime = runtime or tmdb.get("runtime_min", "")
+                    year = year or str(tmdb.get("year") or "")
+
+                # Final normalised row
+                iso_date = datetime.strptime(date_str, "%d.%m.%y").strftime("%Y-%m-%d")
+
+                row_dict = {
+                    "venue": CINEMA_NAME,
+                    "date": iso_date,
+                    "title": title_html,
+                    "director": director,
+                    "runtime_min": runtime,
+                    "format": fmt or "Digital",
+                    "times": [time_24],
+                    "year": year,
+                    "extra": "",
+                    "url": film_link,
+                }
+
+                final_rows.append(normalise_row(row_dict))
+
+            prog_page.close()
+
+        page.close()
+        browser.close()
+
+    return final_rows
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+    print("Loading existing Close-Up rows (if any)…")
+    existing_rows = load_existing()
+    print(f"  → Loaded {len(existing_rows)} existing rows")
+
+    print("Scraping Close-Up Film Centre…")
+    new_rows = scrape_closeup()
+    print(f"  → Scraped {len(new_rows)} new rows")
+
+    print("Merging and saving…")
+    merged = merge_all(existing_rows, new_rows)
+    save_output(merged)
