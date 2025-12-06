@@ -32,37 +32,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // TIME NORMALISER — convert anything → "HH:MM" 24h
-    // -------------------------------------------------------
-    function normaliseTime(t) {
-        if (!t) return "";
-
-        // Try direct parse: handles "2:15 PM", "14:30", "8 pm"
-        let d = new Date("2000-01-01 " + t);
-        if (!isNaN(d.getTime())) {
-            return d.toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit"
-            });
-        }
-
-        // Fix formats like "8pm" → "8 pm"
-        const fixed = t.replace(/(\d)(am|pm)/i, "$1 $2");
-
-        d = new Date("2000-01-01 " + fixed);
-        if (!isNaN(d.getTime())) {
-            return d.toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit"
-            });
-        }
-
-        // If completely unparseable, return original but trimmed
-        return t.trim();
-    }
-
-    // -------------------------------------------------------
-    // GUARANTEED FIX: Apply class to final row cards
+    // FORCE LAST ROW CARDS TO ALIGN NICELY
     // -------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
@@ -72,11 +42,54 @@ document.addEventListener("DOMContentLoaded", function () {
 
             const children = Array.from(screeningsContainer.children);
             const lastThree = children.slice(-3);
-
-            lastThree.forEach(card => {
-                card.classList.add('last-row-card');
-            });
+            lastThree.forEach(card => card.classList.add('last-row-card'));
         });
+    }
+
+    // -------------------------------------------------------
+    // 🔥 ROBUST 24-HOUR TIME NORMALISER
+    // -------------------------------------------------------
+    function normaliseTime(t) {
+        if (!t) return "";
+
+        t = t.trim()
+             .replace(/\./g, ":")              // 5.30pm → 5:30pm
+             .replace(/\s+/g, " ")             // collapse weird whitespace
+             .replace(/([ap]m)$/i, " $1")      // 8pm → 8 pm
+             .replace(/([AP]M)$/g, " $1");     // handles caps
+
+        // Native parse first
+        let d = new Date("2000-01-01 " + t);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+        }
+
+        // If missing minutes (e.g., “8 pm”)
+        const hm = t.match(/^(\d{1,2})\s*([ap]m)$/i);
+        if (hm) {
+            let d2 = new Date(`2000-01-01 ${hm[1]}:00 ${hm[2]}`);
+            return d2.toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+        }
+
+        // Final fallback: manual extraction
+        const simple = t.match(/(\d{1,2}):?(\d{2})?/);
+        if (simple) {
+            let h = parseInt(simple[1]);
+            let m = simple[2] ? parseInt(simple[2]) : 0;
+
+            if (/pm/i.test(t) && h < 12) h += 12;
+            if (/am/i.test(t) && h === 12) h = 0;
+
+            return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        }
+
+        return t; // truly unparseable
     }
 
     // -------------------------------------------------------
@@ -90,7 +103,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const formatted = date.toISOString().split("T")[0];
 
         const url =
-            "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+            "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2d-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
         fetch(url)
             .then(res => res.json())
@@ -107,6 +120,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 rows.forEach(row => {
                     if (!row || row.length < 3) return;
 
+                    // Map all 9 columns EXACTLY
                     const rowDate  = row[0];
                     const cinema   = row[1];
                     const title    = row[2];
@@ -125,6 +139,10 @@ document.addEventListener("DOMContentLoaded", function () {
                     let film = data[cinema].find(f => f.title === title);
 
                     if (!film) {
+                        const processedTimes = timeRaw
+                            ? timeRaw.split(",").map(t => normaliseTime(t.trim()))
+                            : [];
+
                         film = {
                             title,
                             details: [
@@ -134,12 +152,8 @@ document.addEventListener("DOMContentLoaded", function () {
                                 format || "",
                                 notes || ""
                             ].filter(Boolean).join(", "),
-                            times: timeRaw
-                                ? timeRaw
-                                    .split(',')
-                                    .map(t => normaliseTime(t.trim()))
-                                    .filter(Boolean)
-                                : [],
+
+                            times: processedTimes
                         };
 
                         data[cinema].push(film);
@@ -152,7 +166,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER
+                // RENDER CARDS
                 // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
@@ -171,9 +185,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     screenings.forEach(s => {
                         html += `
                             <div class="screening">
-                                ${s.title} 
+                                ${s.title}
                                 <div class="details">${s.details}</div>
-                                <div class="time">${s.times.join(", ")}</div> 
+                                <div class="time">${s.times.join(", ")}</div>
                             </div>
                         `;
                     });
@@ -184,7 +198,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 });
 
                 applyLastRowFix();
-
             })
             .catch(err => {
                 console.error("Listings fetch error:", err);
@@ -193,7 +206,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // NAVIGATION
+    // CONTROLS
     // -------------------------------------------------------
     document.getElementById("prev-btn").onclick = function () {
         currentDate.setDate(currentDate.getDate() - 1);
@@ -217,9 +230,7 @@ document.addEventListener("DOMContentLoaded", function () {
         loadListingsFor(currentDate);
     };
 
-    // -------------------------------------------------------
-    // INITIAL PAGE LOAD
-    // -------------------------------------------------------
+    // LOAD FIRST VIEW
     updateCalendar();
     loadListingsFor(currentDate);
 
