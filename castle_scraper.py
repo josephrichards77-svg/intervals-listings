@@ -53,7 +53,7 @@ def normalise_title_for_cache(title: str) -> str:
     )
 
 # ============================================================
-# TMDB CACHE
+# TMDB CACHE (FORCE RECREATE)
 # ============================================================
 
 _tmdb_conn = None
@@ -62,8 +62,13 @@ def init_tmdb_cache():
     db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+
+    # Drop any existing incompatible table (safe: cache)
+    cur.execute("DROP TABLE IF EXISTS tmdb_cache")
+
+    # Recreate with correct constraints
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS tmdb_cache (
+        CREATE TABLE tmdb_cache (
             title TEXT PRIMARY KEY,
             tmdb_id INTEGER,
             runtime_min INTEGER,
@@ -72,6 +77,7 @@ def init_tmdb_cache():
             last_updated TEXT
         )
     """)
+
     conn.commit()
     conn.close()
 
@@ -138,7 +144,6 @@ def tmdb_fetch(title):
     best = results[0]
     tmdb_id = best["id"]
 
-    # Details
     det = requests.get(
         f"https://api.themoviedb.org/3/movie/{tmdb_id}",
         params={"api_key": TMDB_API_KEY}
@@ -148,7 +153,6 @@ def tmdb_fetch(title):
     release = det.get("release_date") or ""
     year = int(release[:4]) if len(release) >= 4 else ""
 
-    # Director
     director = ""
     try:
         credits = requests.get(
