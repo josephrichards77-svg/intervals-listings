@@ -82,11 +82,8 @@ document.addEventListener("DOMContentLoaded", function () {
             let columns = 0;
 
             for (const card of cards) {
-                if (card.offsetTop === firstTop) {
-                    columns++;
-                } else {
-                    break;
-                }
+                if (card.offsetTop === firstTop) columns++;
+                else break;
             }
 
             const remainder = cards.length % columns;
@@ -135,10 +132,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     const rowDate = safe[0];
                     const cinema  = safe[1];
+                    if (rowDate !== formatted || !cinema) return;
 
                     const rawTitle = safe[2].trim();
-                    let titleText  = rawTitle;
-                    let titleLink  = "";
+                    let titleText = rawTitle;
+                    let titleLink = "";
 
                     const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
                     if (m) {
@@ -153,9 +151,6 @@ document.addEventListener("DOMContentLoaded", function () {
                     const year     = safe[7];
                     const notes    = safe[8];
 
-                    if (rowDate !== formatted) return;
-                    if (!cinema) return;
-
                     if (!data[cinema]) data[cinema] = [];
 
                     let film = data[cinema].find(f => f.title === titleText);
@@ -164,22 +159,15 @@ document.addEventListener("DOMContentLoaded", function () {
                         ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
                         : [];
 
-                    // ★ NEW: merge instead of ignore
                     if (film) {
-
                         times.forEach(t => {
                             if (t && !film.times.includes(t)) {
                                 film.times.push(t);
                             }
                         });
-
-                        if (notes && !film.notes) {
-                            film.notes = notes;
-                        }
-
+                        if (notes && !film.notes) film.notes = notes;
                     } else {
-
-                        film = {
+                        data[cinema].push({
                             title: titleText,
                             titleLink,
                             notes,
@@ -190,8 +178,7 @@ document.addEventListener("DOMContentLoaded", function () {
                                 format
                             ].filter(Boolean).join(", "),
                             times
-                        };
-                        data[cinema].push(film);
+                        });
                     }
                 });
 
@@ -200,37 +187,38 @@ document.addEventListener("DOMContentLoaded", function () {
                     return;
                 }
 
-                Object.entries(data).forEach(([cinemaName, screenings]) => {
+                Object.entries(data)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .forEach(([cinemaName, screenings]) => {
 
-                    screenings.sort((a, b) => {
-                        const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
-                        const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
-                        return parseInt(ta) - parseInt(tb);
-                    });
+                        screenings.sort((a, b) => {
+                            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
+                            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
+                            return parseInt(ta) - parseInt(tb);
+                        });
 
-                    let html = `
-                        <div class="cinema">
-                            <h2>${cinemaName}</h2>
-                            <div class="screenings">
-                    `;
-
-                    screenings.forEach(s => {
-                        html += `
-                            <div class="screening">
-                                ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-                                <a href="${s.titleLink || '#'}">${s.title}</a>
-                                <div class="details">${s.details}</div>
-                                <div class="time">${s.times.join(", ")}</div>
-                            </div>
+                        let html = `
+                            <div class="cinema">
+                                <h2>${cinemaName}</h2>
+                                <div class="screenings">
                         `;
-                    });
 
-                    html += `</div></div>`;
-                    container.innerHTML += html;
-                });
+                        screenings.forEach(s => {
+                            html += `
+                                <div class="screening">
+                                    ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                                    <a href="${s.titleLink || '#'}">${s.title}</a>
+                                    <div class="details">${s.details}</div>
+                                    <div class="time">${s.times.join(", ")}</div>
+                                </div>
+                            `;
+                        });
+
+                        html += `</div></div>`;
+                        container.innerHTML += html;
+                    });
 
                 applyLastRowFix();
-
             })
             .catch(err => {
                 console.error("Listings fetch error:", err);
