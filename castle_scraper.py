@@ -58,34 +58,52 @@ def normalise_title_for_cache(title: str) -> str:
 
 _tmdb_conn = None
 
+def init_tmdb_cache():
+    db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tmdb_cache (
+            title TEXT PRIMARY KEY,
+            tmdb_id INTEGER,
+            runtime_min INTEGER,
+            director TEXT,
+            final_year INTEGER,
+            last_updated TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
 def get_tmdb_conn():
     global _tmdb_conn
     db_path = os.path.join(os.path.dirname(__file__), TMDB_DB_FILENAME)
-    if not os.path.exists(db_path):
-        return None
+
     if _tmdb_conn is None:
+        init_tmdb_cache()
         _tmdb_conn = sqlite3.connect(db_path)
         _tmdb_conn.row_factory = sqlite3.Row
+
     return _tmdb_conn
 
 def tmdb_cache_lookup(title):
     conn = get_tmdb_conn()
-    if not conn:
-        return {}
-
     cur = conn.cursor()
-    cur.execute("SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)", (title,))
+    cur.execute(
+        "SELECT * FROM tmdb_cache WHERE LOWER(title)=LOWER(?)",
+        (title,)
+    )
     row = cur.fetchone()
     return dict(row) if row else {}
 
 def tmdb_cache_upsert(title, tmdb_id, runtime, director, final_year):
     conn = get_tmdb_conn()
-    if not conn:
-        return
     ts = datetime.now().isoformat(timespec="seconds")
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO tmdb_cache (title, tmdb_id, runtime_min, director, final_year, last_updated)
+        INSERT INTO tmdb_cache (
+            title, tmdb_id, runtime_min, director, final_year, last_updated
+        )
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(title) DO UPDATE SET
             tmdb_id=excluded.tmdb_id,
@@ -131,19 +149,19 @@ def tmdb_fetch(title):
     year = int(release[:4]) if len(release) >= 4 else ""
 
     # Director
+    director = ""
     try:
         credits = requests.get(
             f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits",
             params={"api_key": TMDB_API_KEY}
         ).json()
 
-        director = ""
         for c in credits.get("crew", []):
             if c.get("job") == "Director":
                 director = c.get("name")
                 break
     except:
-        director = ""
+        pass
 
     return {
         "tmdb_id": tmdb_id,
@@ -166,7 +184,13 @@ def lookup_tmdb(title):
             director = fetched.get("director") or director
             runtime = fetched.get("runtime") or runtime
             year = fetched.get("year") or year
-            tmdb_cache_upsert(clean_title, fetched.get("tmdb_id"), runtime, director, year)
+            tmdb_cache_upsert(
+                clean_title,
+                fetched.get("tmdb_id"),
+                runtime,
+                director,
+                year
+            )
 
     return {
         "director": clean(director),
@@ -192,18 +216,14 @@ def scrape():
         for i in range(films.count()):
             f = films.nth(i)
 
-            # Title
             title = clean(f.locator("div.tile-details h1").inner_text())
 
-            # Link
             href = f.locator("div.tile-details a").get_attribute("href")
             link = href if href.startswith("http") else f"{BASE_URL}{href}"
 
-            # Open the film page
             fp = browser.new_page()
             fp.goto(link)
 
-            # JSON-LD screenings
             blocks = fp.locator('script[type="application/ld+json"]')
             times = []
 
@@ -216,13 +236,11 @@ def scrape():
                 if isinstance(data, dict) and data.get("@type") == "ScreeningEvent":
                     dt = datetime.fromisoformat(data["startDate"])
                     times.append(dt)
-            
+
             fp.close()
 
-            # Metadata
             tmdb = lookup_tmdb(title)
 
-            # Build clean rows
             for dt in times:
                 rows.append(normalise_row({
                     "venue": CINEMA_NAME,
