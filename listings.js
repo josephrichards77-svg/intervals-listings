@@ -68,44 +68,40 @@ document.addEventListener("DOMContentLoaded", function () {
         return `${String(hh).padStart(2, "0")}:${mm}`;
     }
 
-  // -------------------------------------------------------
-// LAST ROW FIX (RESPONSIVE-SAFE)
-// -------------------------------------------------------
-function applyLastRowFix() {
-    document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-        const cards = Array.from(screeningsContainer.children);
-        if (!cards.length) return;
+    // -------------------------------------------------------
+    // LAST ROW FIX (RESPONSIVE-SAFE)
+    // -------------------------------------------------------
+    function applyLastRowFix() {
+        document.querySelectorAll('.screenings').forEach(screeningsContainer => {
+            const cards = Array.from(screeningsContainer.children);
+            if (!cards.length) return;
 
-        // reset
-        cards.forEach(card => card.classList.remove('last-row-card'));
+            cards.forEach(card => card.classList.remove('last-row-card'));
 
-        // detect how many cards are in the first visual row
-        const firstTop = cards[0].offsetTop;
-        let columns = 0;
+            const firstTop = cards[0].offsetTop;
+            let columns = 0;
 
-        for (const card of cards) {
-            if (card.offsetTop === firstTop) {
-                columns++;
-            } else {
-                break;
+            for (const card of cards) {
+                if (card.offsetTop === firstTop) {
+                    columns++;
+                } else {
+                    break;
+                }
             }
-        }
 
-        // find start of last visual row
-        const remainder = cards.length % columns;
-        const lastRowStart =
-            remainder === 0
-                ? cards.length - columns
-                : cards.length - remainder;
+            const remainder = cards.length % columns;
+            const lastRowStart =
+                remainder === 0
+                    ? cards.length - columns
+                    : cards.length - remainder;
 
-        cards.forEach((card, index) => {
-            if (index >= lastRowStart) {
-                card.classList.add('last-row-card');
-            }
+            cards.forEach((card, index) => {
+                if (index >= lastRowStart) {
+                    card.classList.add('last-row-card');
+                }
+            });
         });
-    });
-}
-
+    }
 
     // -------------------------------------------------------
     // LOAD LISTINGS FROM GOOGLE SHEETS
@@ -140,7 +136,6 @@ function applyLastRowFix() {
                     const rowDate = safe[0];
                     const cinema  = safe[1];
 
-                    // -------- TITLE + LINK PARSING --------
                     const rawTitle = safe[2].trim();
                     let titleText  = rawTitle;
                     let titleLink  = "";
@@ -169,7 +164,21 @@ function applyLastRowFix() {
                         ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
                         : [];
 
-                    if (!film) {
+                    // ★ NEW: merge instead of ignore
+                    if (film) {
+
+                        times.forEach(t => {
+                            if (t && !film.times.includes(t)) {
+                                film.times.push(t);
+                            }
+                        });
+
+                        if (notes && !film.notes) {
+                            film.notes = notes;
+                        }
+
+                    } else {
+
                         film = {
                             title: titleText,
                             titleLink,
@@ -191,9 +200,6 @@ function applyLastRowFix() {
                     return;
                 }
 
-                // -------------------------------------------------------
-                // RENDER EACH CINEMA
-                // -------------------------------------------------------
                 Object.entries(data).forEach(([cinemaName, screenings]) => {
 
                     screenings.sort((a, b) => {
@@ -220,7 +226,6 @@ function applyLastRowFix() {
                     });
 
                     html += `</div></div>`;
-
                     container.innerHTML += html;
                 });
 
@@ -263,6 +268,5 @@ function applyLastRowFix() {
     // -------------------------------------------------------
     updateCalendar();
     loadListingsFor(currentDate);
-window.addEventListener('resize', applyLastRowFix);
+    window.addEventListener('resize', applyLastRowFix);
 });
-
