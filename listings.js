@@ -133,7 +133,6 @@ document.addEventListener("DOMContentLoaded", function () {
                     const rowDate = safe[0];
                     const cinema  = safe[1];
 
-                    // -------- TITLE + LINK PARSING --------
                     const rawTitle = safe[2].trim();
                     let titleText  = rawTitle;
                     let titleLink  = "";
@@ -163,7 +162,6 @@ document.addEventListener("DOMContentLoaded", function () {
                         : [];
 
                     if (!film) {
-                        // FIRST ROW — authoritative metadata
                         film = {
                             title: titleText,
                             titleLink,
@@ -180,7 +178,7 @@ document.addEventListener("DOMContentLoaded", function () {
                         };
                         data[cinema].push(film);
                     } else {
-                        // LATER ROWS — merge TIMES ONLY
+                        // merge TIMES ONLY
                         times.forEach(t => {
                             if (t && !film.times.includes(t)) {
                                 film.times.push(t);
@@ -195,36 +193,40 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER EACH CINEMA
+                // RENDER EACH CINEMA (ALPHABETICAL)
                 // -------------------------------------------------------
-                Object.entries(data).forEach(([cinemaName, screenings]) => {
+                Object.keys(data)
+                    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }))
+                    .forEach(cinemaName => {
 
-                    screenings.sort((a, b) => {
-                        const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
-                        const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
-                        return parseInt(ta) - parseInt(tb);
-                    });
+                        const screenings = data[cinemaName];
 
-                    let html = `
-                        <div class="cinema">
-                            <h2>${cinemaName}</h2>
-                            <div class="screenings">
-                    `;
+                        screenings.sort((a, b) => {
+                            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
+                            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
+                            return parseInt(ta) - parseInt(tb);
+                        });
 
-                    screenings.forEach(s => {
-                        html += `
-                            <div class="screening">
-                                ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-                                <a href="${s.titleLink || '#'}">${s.title}</a>
-                                <div class="details">${s.details}</div>
-                                <div class="time">${s.times.join(", ")}</div>
-                            </div>
+                        let html = `
+                            <div class="cinema">
+                                <h2>${cinemaName}</h2>
+                                <div class="screenings">
                         `;
-                    });
 
-                    html += `</div></div>`;
-                    container.innerHTML += html;
-                });
+                        screenings.forEach(s => {
+                            html += `
+                                <div class="screening">
+                                    ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                                    <a href="${s.titleLink || '#'}">${s.title}</a>
+                                    <div class="details">${s.details}</div>
+                                    <div class="time">${s.times.join(", ")}</div>
+                                </div>
+                            `;
+                        });
+
+                        html += `</div></div>`;
+                        container.innerHTML += html;
+                    });
 
                 applyLastRowFix();
             })
