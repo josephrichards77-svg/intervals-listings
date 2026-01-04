@@ -68,37 +68,44 @@ document.addEventListener("DOMContentLoaded", function () {
         return `${String(hh).padStart(2, "0")}:${mm}`;
     }
 
-    // -------------------------------------------------------
-    // LAST ROW FIX (RESPONSIVE-SAFE)
-    // -------------------------------------------------------
-    function applyLastRowFix() {
-        document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-            const cards = Array.from(screeningsContainer.children);
-            if (!cards.length) return;
+  // -------------------------------------------------------
+// LAST ROW FIX (RESPONSIVE-SAFE)
+// -------------------------------------------------------
+function applyLastRowFix() {
+    document.querySelectorAll('.screenings').forEach(screeningsContainer => {
+        const cards = Array.from(screeningsContainer.children);
+        if (!cards.length) return;
 
-            cards.forEach(card => card.classList.remove('last-row-card'));
+        // reset
+        cards.forEach(card => card.classList.remove('last-row-card'));
 
-            const firstTop = cards[0].offsetTop;
-            let columns = 0;
+        // detect how many cards are in the first visual row
+        const firstTop = cards[0].offsetTop;
+        let columns = 0;
 
-            for (const card of cards) {
-                if (card.offsetTop === firstTop) columns++;
-                else break;
+        for (const card of cards) {
+            if (card.offsetTop === firstTop) {
+                columns++;
+            } else {
+                break;
             }
+        }
 
-            const remainder = cards.length % columns;
-            const lastRowStart =
-                remainder === 0
-                    ? cards.length - columns
-                    : cards.length - remainder;
+        // find start of last visual row
+        const remainder = cards.length % columns;
+        const lastRowStart =
+            remainder === 0
+                ? cards.length - columns
+                : cards.length - remainder;
 
-            cards.forEach((card, index) => {
-                if (index >= lastRowStart) {
-                    card.classList.add('last-row-card');
-                }
-            });
+        cards.forEach((card, index) => {
+            if (index >= lastRowStart) {
+                card.classList.add('last-row-card');
+            }
         });
-    }
+    });
+}
+
 
     // -------------------------------------------------------
     // LOAD LISTINGS FROM GOOGLE SHEETS
@@ -132,11 +139,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     const rowDate = safe[0];
                     const cinema  = safe[1];
-                    if (rowDate !== formatted || !cinema) return;
 
+                    // -------- TITLE + LINK PARSING --------
                     const rawTitle = safe[2].trim();
-                    let titleText = rawTitle;
-                    let titleLink = "";
+                    let titleText  = rawTitle;
+                    let titleLink  = "";
 
                     const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
                     if (m) {
@@ -151,6 +158,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     const year     = safe[7];
                     const notes    = safe[8];
 
+                    if (rowDate !== formatted) return;
+                    if (!cinema) return;
+
                     if (!data[cinema]) data[cinema] = [];
 
                     let film = data[cinema].find(f => f.title === titleText);
@@ -159,15 +169,8 @@ document.addEventListener("DOMContentLoaded", function () {
                         ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
                         : [];
 
-                    if (film) {
-                        times.forEach(t => {
-                            if (t && !film.times.includes(t)) {
-                                film.times.push(t);
-                            }
-                        });
-                        if (notes && !film.notes) film.notes = notes;
-                    } else {
-                        data[cinema].push({
+                    if (!film) {
+                        film = {
                             title: titleText,
                             titleLink,
                             notes,
@@ -178,7 +181,8 @@ document.addEventListener("DOMContentLoaded", function () {
                                 format
                             ].filter(Boolean).join(", "),
                             times
-                        });
+                        };
+                        data[cinema].push(film);
                     }
                 });
 
@@ -187,38 +191,41 @@ document.addEventListener("DOMContentLoaded", function () {
                     return;
                 }
 
-                Object.entries(data)
-                    .sort(([a], [b]) => a.localeCompare(b))
-                    .forEach(([cinemaName, screenings]) => {
+                // -------------------------------------------------------
+                // RENDER EACH CINEMA
+                // -------------------------------------------------------
+                Object.entries(data).forEach(([cinemaName, screenings]) => {
 
-                        screenings.sort((a, b) => {
-                            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
-                            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
-                            return parseInt(ta) - parseInt(tb);
-                        });
-
-                        let html = `
-                            <div class="cinema">
-                                <h2>${cinemaName}</h2>
-                                <div class="screenings">
-                        `;
-
-                        screenings.forEach(s => {
-                            html += `
-                                <div class="screening">
-                                    ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-                                    <a href="${s.titleLink || '#'}">${s.title}</a>
-                                    <div class="details">${s.details}</div>
-                                    <div class="time">${s.times.join(", ")}</div>
-                                </div>
-                            `;
-                        });
-
-                        html += `</div></div>`;
-                        container.innerHTML += html;
+                    screenings.sort((a, b) => {
+                        const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
+                        const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
+                        return parseInt(ta) - parseInt(tb);
                     });
 
+                    let html = `
+                        <div class="cinema">
+                            <h2>${cinemaName}</h2>
+                            <div class="screenings">
+                    `;
+
+                    screenings.forEach(s => {
+                        html += `
+                            <div class="screening">
+                                ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                                <a href="${s.titleLink || '#'}">${s.title}</a>
+                                <div class="details">${s.details}</div>
+                                <div class="time">${s.times.join(", ")}</div>
+                            </div>
+                        `;
+                    });
+
+                    html += `</div></div>`;
+
+                    container.innerHTML += html;
+                });
+
                 applyLastRowFix();
+
             })
             .catch(err => {
                 console.error("Listings fetch error:", err);
@@ -256,5 +263,5 @@ document.addEventListener("DOMContentLoaded", function () {
     // -------------------------------------------------------
     updateCalendar();
     loadListingsFor(currentDate);
-    window.addEventListener('resize', applyLastRowFix);
+window.addEventListener('resize', applyLastRowFix);
 });
