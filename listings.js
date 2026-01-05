@@ -1,9 +1,22 @@
 console.log("✅ NEW listings.js LOADED", new Date().toISOString());
 
-
 document.addEventListener("DOMContentLoaded", function () {
 
-    let currentDate = new Date();
+    // -------------------------------------------------------
+    // DATE SAFETY — FORCE LOCAL MIDNIGHT
+    // -------------------------------------------------------
+    function atLocalMidnight(d) {
+        return new Date(
+            d.getFullYear(),
+            d.getMonth(),
+            d.getDate()
+        );
+    }
+
+    // -------------------------------------------------------
+    // CURRENT DATE (LOCKED)
+    // -------------------------------------------------------
+    let currentDate = atLocalMidnight(new Date());
 
     // -------------------------------------------------------
     // ORDINALS
@@ -31,7 +44,8 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function updateCalendar() {
-        document.getElementById("calendar-date").textContent = formatFullDate(currentDate);
+        document.getElementById("calendar-date").textContent =
+            formatFullDate(currentDate);
     }
 
     // -------------------------------------------------------
@@ -51,7 +65,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // TIME NORMALISER (AM/PM → 24h)
+    // TIME NORMALISER
     // -------------------------------------------------------
     function normaliseTime(t) {
         if (!t) return "";
@@ -72,43 +86,38 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // CINEMA NAME NORMALISER (FOR SORTING ONLY)
+    // CINEMA SORT NORMALISER
     // -------------------------------------------------------
     function normaliseCinemaName(name) {
-        return name
-            .replace(/^(the|a|an)\s+/i, "")
-            .trim()
-            .toLowerCase();
+        return name.replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
     }
 
     // -------------------------------------------------------
     // LAST ROW FIX
     // -------------------------------------------------------
     function applyLastRowFix() {
-        document.querySelectorAll('.screenings').forEach(screeningsContainer => {
-            const cards = Array.from(screeningsContainer.children);
+        document.querySelectorAll('.screenings').forEach(container => {
+            const cards = Array.from(container.children);
             if (!cards.length) return;
 
-            cards.forEach(card => card.classList.remove('last-row-card'));
+            cards.forEach(c => c.classList.remove('last-row-card'));
 
             const firstTop = cards[0].offsetTop;
             let columns = 0;
 
-            for (const card of cards) {
-                if (card.offsetTop === firstTop) columns++;
+            for (const c of cards) {
+                if (c.offsetTop === firstTop) columns++;
                 else break;
             }
 
             const remainder = cards.length % columns;
-            const lastRowStart =
+            const start =
                 remainder === 0
                     ? cards.length - columns
                     : cards.length - remainder;
 
-            cards.forEach((card, index) => {
-                if (index >= lastRowStart) {
-                    card.classList.add('last-row-card');
-                }
+            cards.forEach((c, i) => {
+                if (i >= start) c.classList.add('last-row-card');
             });
         });
     }
@@ -121,7 +130,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const container = document.getElementById("cinema-listings");
         container.innerHTML = "";
 
-        // ✅ LOCAL DATE STRING (NO UTC)
+        // 🔒 DATE STRING (LOCAL MIDNIGHT SAFE)
         const formatted = [
             date.getFullYear(),
             String(date.getMonth() + 1).padStart(2, "0"),
@@ -132,30 +141,27 @@ document.addEventListener("DOMContentLoaded", function () {
             "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
         fetch(url)
-            .then(res => res.json())
+            .then(r => r.json())
             .then(sheet => {
 
                 if (!sheet.values || sheet.values.length < 2) {
-                    container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+                    container.innerHTML =
+                        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
                     return;
                 }
 
-                const rows = sheet.values.slice(1);
                 const data = {};
+                sheet.values.slice(1).forEach(row => {
 
-                rows.forEach(row => {
-
-                    const safe = [];
-                    for (let i = 0; i < 9; i++) safe[i] = row[i] || "";
+                    const safe = Array.from({ length: 9 }, (_, i) => row[i] || "");
 
                     const rowDate = safe[0];
                     const cinema  = safe[1];
-
                     if (rowDate !== formatted || !cinema) return;
 
                     const rawTitle = safe[2].trim();
-                    let titleText  = rawTitle;
-                    let titleLink  = "";
+                    let titleText = rawTitle;
+                    let titleLink = "";
 
                     const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
                     if (m) {
@@ -166,21 +172,15 @@ document.addEventListener("DOMContentLoaded", function () {
                     const director = safe[3];
                     const runtime  = safe[4];
                     const format   = normaliseFormat(safe[5]);
-                    const timeRaw  = safe[6];
+                    const times    = safe[6]
+                        ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
+                        : [];
                     const year     = safe[7];
                     const notes    = safe[8];
 
                     if (!data[cinema]) data[cinema] = [];
 
                     let film = data[cinema].find(f => f.title === titleText);
-
-                    // ✅ HARD RESET TIMES PER ROW
-                    const times = timeRaw
-                        ? String(timeRaw)
-                            .split(",")
-                            .map(t => normaliseTime(t.trim()))
-                            .filter(Boolean)
-                        : [];
 
                     if (!film) {
                         film = {
@@ -205,87 +205,86 @@ document.addEventListener("DOMContentLoaded", function () {
                     }
                 });
 
-                if (Object.keys(data).length === 0) {
-                    container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+                if (!Object.keys(data).length) {
+                    container.innerHTML =
+                        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
                     return;
                 }
 
                 Object.keys(data)
                     .sort((a, b) =>
                         normaliseCinemaName(a).localeCompare(
-                            normaliseCinemaName(b),
-                            "en",
-                            { sensitivity: "base" }
+                            normaliseCinemaName(b), "en", { sensitivity: "base" }
                         )
                     )
-                    .forEach(cinemaName => {
+                    .forEach(cinema => {
 
-                        const screenings = data[cinemaName];
+                        const screenings = data[cinema];
+                        screenings.sort((a, b) =>
+                            parseInt((a.times[0] || "9999").replace(":", "")) -
+                            parseInt((b.times[0] || "9999").replace(":", ""))
+                        );
 
-                        screenings.sort((a, b) => {
-                            const ta = a.times[0] ? a.times[0].replace(":", "") : "9999";
-                            const tb = b.times[0] ? b.times[0].replace(":", "") : "9999";
-                            return parseInt(ta) - parseInt(tb);
-                        });
-
-                        let html = `
+                        container.innerHTML += `
                             <div class="cinema">
-                                <h2>${cinemaName}</h2>
+                                <h2>${cinema}</h2>
                                 <div class="screenings">
-                        `;
-
-                        screenings.forEach(s => {
-                            html += `
-                                <div class="screening">
-                                    ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-                                    <a href="${s.titleLink || '#'}">${s.title}</a>
-                                    <div class="details">${s.details}</div>
-                                    <div class="time">${s.times.join(", ")}</div>
+                                    ${screenings.map(s => `
+                                        <div class="screening">
+                                            ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                                            <a href="${s.titleLink || '#'}">${s.title}</a>
+                                            <div class="details">${s.details}</div>
+                                            <div class="time">${s.times.join(", ")}</div>
+                                        </div>
+                                    `).join("")}
                                 </div>
-                            `;
-                        });
-
-                        html += `</div></div>`;
-                        container.innerHTML += html;
+                            </div>
+                        `;
                     });
 
                 applyLastRowFix();
             })
             .catch(err => {
                 console.error("Listings fetch error:", err);
-                container.innerHTML = `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
+                container.innerHTML =
+                    `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
             });
     }
 
     // -------------------------------------------------------
-    // NAVIGATION
+    // NAVIGATION (SAFE)
     // -------------------------------------------------------
-    document.getElementById("prev-btn").onclick = function () {
-        currentDate.setDate(currentDate.getDate() - 1);
+    document.getElementById("prev-btn").onclick = () => {
+        currentDate = atLocalMidnight(
+            new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - 1)
+        );
         updateCalendar();
         loadListingsFor(currentDate);
     };
 
-    document.getElementById("next-btn").onclick = function () {
-        currentDate.setDate(currentDate.getDate() + 1);
+    document.getElementById("next-btn").onclick = () => {
+        currentDate = atLocalMidnight(
+            new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() + 1)
+        );
         updateCalendar();
         loadListingsFor(currentDate);
     };
 
-    document.getElementById("calendar-date").onclick = function () {
+    document.getElementById("calendar-date").onclick = () => {
         document.getElementById("date-picker").showPicker();
     };
 
-    document.getElementById("date-picker").onchange = function (e) {
-        currentDate = new Date(e.target.value);
+    document.getElementById("date-picker").onchange = e => {
+        currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
         updateCalendar();
         loadListingsFor(currentDate);
     };
 
     // -------------------------------------------------------
-    // INITIAL LOAD
+    // INIT
     // -------------------------------------------------------
     updateCalendar();
     loadListingsFor(currentDate);
-    window.addEventListener('resize', applyLastRowFix);
+    window.addEventListener("resize", applyLastRowFix);
+
 });
