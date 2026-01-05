@@ -69,6 +69,16 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
+    // CINEMA NAME NORMALISER (FOR SORTING ONLY)
+    // -------------------------------------------------------
+    function normaliseCinemaName(name) {
+        return name
+            .replace(/^(the|a|an)\s+/i, "")
+            .trim()
+            .toLowerCase();
+    }
+
+    // -------------------------------------------------------
     // LAST ROW FIX (RESPONSIVE-SAFE)
     // -------------------------------------------------------
     function applyLastRowFix() {
@@ -178,7 +188,6 @@ document.addEventListener("DOMContentLoaded", function () {
                         };
                         data[cinema].push(film);
                     } else {
-                        // merge TIMES ONLY
                         times.forEach(t => {
                             if (t && !film.times.includes(t)) {
                                 film.times.push(t);
@@ -193,10 +202,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
 
                 // -------------------------------------------------------
-                // RENDER EACH CINEMA (ALPHABETICAL)
+                // RENDER EACH CINEMA (ALPHABETICAL, IGNORING ARTICLES)
                 // -------------------------------------------------------
                 Object.keys(data)
-                    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }))
+                    .sort((a, b) =>
+                        normaliseCinemaName(a).localeCompare(
+                            normaliseCinemaName(b),
+                            "en",
+                            { sensitivity: "base" }
+                        )
+                    )
                     .forEach(cinemaName => {
 
                         const screenings = data[cinemaName];
