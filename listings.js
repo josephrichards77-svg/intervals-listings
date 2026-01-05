@@ -79,7 +79,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // LAST ROW FIX (RESPONSIVE-SAFE)
+    // LAST ROW FIX
     // -------------------------------------------------------
     function applyLastRowFix() {
         document.querySelectorAll('.screenings').forEach(screeningsContainer => {
@@ -111,14 +111,19 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // LOAD LISTINGS FROM GOOGLE SHEETS
+    // LOAD LISTINGS
     // -------------------------------------------------------
     function loadListingsFor(date) {
 
         const container = document.getElementById("cinema-listings");
         container.innerHTML = "";
 
-        const formatted = date.toISOString().split("T")[0];
+        // ✅ LOCAL DATE STRING (NO UTC)
+        const formatted = [
+            date.getFullYear(),
+            String(date.getMonth() + 1).padStart(2, "0"),
+            String(date.getDate()).padStart(2, "0")
+        ].join("-");
 
         const url =
             "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
@@ -143,6 +148,8 @@ document.addEventListener("DOMContentLoaded", function () {
                     const rowDate = safe[0];
                     const cinema  = safe[1];
 
+                    if (rowDate !== formatted || !cinema) return;
+
                     const rawTitle = safe[2].trim();
                     let titleText  = rawTitle;
                     let titleLink  = "";
@@ -160,15 +167,16 @@ document.addEventListener("DOMContentLoaded", function () {
                     const year     = safe[7];
                     const notes    = safe[8];
 
-                    if (rowDate !== formatted) return;
-                    if (!cinema) return;
-
                     if (!data[cinema]) data[cinema] = [];
 
                     let film = data[cinema].find(f => f.title === titleText);
 
-                    let times = timeRaw
-                        ? String(timeRaw).split(",").map(t => normaliseTime(t.trim()))
+                    // ✅ HARD RESET TIMES PER ROW
+                    const times = timeRaw
+                        ? String(timeRaw)
+                            .split(",")
+                            .map(t => normaliseTime(t.trim()))
+                            .filter(Boolean)
                         : [];
 
                     if (!film) {
@@ -184,14 +192,12 @@ document.addEventListener("DOMContentLoaded", function () {
                                     : "",
                                 format
                             ].filter(Boolean).join(", "),
-                            times
+                            times: [...times]
                         };
                         data[cinema].push(film);
                     } else {
                         times.forEach(t => {
-                            if (t && !film.times.includes(t)) {
-                                film.times.push(t);
-                            }
+                            if (!film.times.includes(t)) film.times.push(t);
                         });
                     }
                 });
@@ -201,9 +207,6 @@ document.addEventListener("DOMContentLoaded", function () {
                     return;
                 }
 
-                // -------------------------------------------------------
-                // RENDER EACH CINEMA (ALPHABETICAL, IGNORING ARTICLES)
-                // -------------------------------------------------------
                 Object.keys(data)
                     .sort((a, b) =>
                         normaliseCinemaName(a).localeCompare(
