@@ -1,3 +1,6 @@
+console.log("✅ NEW listings.js LOADED", new Date().toISOString());
+
+
 document.addEventListener("DOMContentLoaded", function () {
 
     let currentDate = new Date();
