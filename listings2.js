@@ -22,7 +22,9 @@ document.addEventListener("DOMContentLoaded", function () {
     return venueMap[slug] || null;
   }
 
-  const venue = getVenueFromURL();
+  const venue = "Barbican";
+console.log("VENUE FORCED:", venue);
+
   console.log("VENUE DETECTED:", venue);
 
   // -------------------------------------------------------
