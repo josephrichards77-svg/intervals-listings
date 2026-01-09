@@ -212,3 +212,4 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
 
 });
+console.log("PATH:", window.location.pathname, "VENUE:", venue);
