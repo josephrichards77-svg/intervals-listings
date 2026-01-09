@@ -213,3 +213,5 @@ document.addEventListener("DOMContentLoaded", function () {
 
 });
 console.log("PATH:", window.location.pathname, "VENUE:", venue);
+alert("LISTINGS2 JS IS RUNNING");
+
