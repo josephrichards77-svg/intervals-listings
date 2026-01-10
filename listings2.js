@@ -22,7 +22,11 @@ document.addEventListener("DOMContentLoaded", function () {
     return venueMap[slug] || null;
   }
 
-  const venue = "Barbican";
+  const container = document.getElementById("cinema-listings");
+const venue = container?.dataset.cinema || null;
+
+console.log("VENUE FROM DATA ATTRIBUTE:", venue);
+
 console.log("VENUE FORCED:", venue);
 
   console.log("VENUE DETECTED:", venue);
