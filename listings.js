@@ -153,7 +153,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 const data = {};
                 sheet.values.slice(1).forEach(row => {
 
-                    const safe = Array.from({ length: 9 }, (_, i) => row[i] || "");
+                    const safe = Array.from({ length: 12 }, (_, i) => row[i] || "");
 
                     const rowDate = safe[0];
                     const cinema  = safe[1];
@@ -177,32 +177,52 @@ document.addEventListener("DOMContentLoaded", function () {
                         : [];
                     const year     = safe[7];
                     const notes    = safe[8];
+                    const blurb            = safe[9];
+                    const programmeTitle   = safe[10];
+                    const programmeFilmsRaw = safe[11];
+
+                    let programmeFilms = [];
+
+if (programmeFilmsRaw) {
+    programmeFilms = programmeFilmsRaw
+        .split("||")
+        .map(f => f.trim())
+        .filter(Boolean)
+        .map(title => ({ title }));
+}
+
+
 
                     if (!data[cinema]) data[cinema] = [];
 
-                    let film = data[cinema].find(f => f.title === titleText);
+                    let film = data[cinema].find(f => f.rawTitle === titleText);
+
 
                     if (!film) {
-                        film = {
-                            title: titleText,
-                            titleLink,
-                            notes,
-                            details: [
-                                director || "",
-                                year || "",
-                                runtime
-                                    ? (String(runtime).includes("min") ? runtime : runtime + " min")
-                                    : "",
-                                format
-                            ].filter(Boolean).join(", "),
-                            times: [...times]
-                        };
-                        data[cinema].push(film);
-                    } else {
-                        times.forEach(t => {
-                            if (!film.times.includes(t)) film.times.push(t);
-                        });
-                    }
+    film = {
+        title: programmeTitle || titleText,
+        rawTitle: titleText, // optional but useful
+        titleLink,
+        notes,
+        blurb,
+        programmeFilms,
+        details: [
+            director || "",
+            year || "",
+            runtime
+                ? (String(runtime).includes("min") ? runtime : runtime + " min")
+                : "",
+            format
+        ].filter(Boolean).join(", "),
+        times: [...times]
+    };
+    data[cinema].push(film);
+} else {
+    times.forEach(t => {
+        if (!film.times.includes(t)) film.times.push(t);
+    });
+}
+
                 });
 
                 if (!Object.keys(data).length) {
