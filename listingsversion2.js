@@ -165,25 +165,37 @@ document.addEventListener("DOMContentLoaded", function () {
                         titleText = m[2];
                     }
 
-                    const director           = safe[3];
-                    const runtime            = safe[4];
-                    const format             = normaliseFormat(safe[5]);
-                    const times              = safe[6]
+                    const director = safe[3];
+                    const runtime  = safe[4];
+                    const format   = normaliseFormat(safe[5]);
+                    const times    = safe[6]
                         ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
                         : [];
-                    const year               = safe[7];
-                    const notes              = safe[8];
-                    const blurb              = safe[9];
-                    const programmeTitle     = safe[10];
-                    const programmeFilmsRaw  = safe[11];
+                    const year     = safe[7];
+                    const notes    = safe[8];
+
+                    // Programme films live in column J (safe[9])
+                    const programmeFilmsRaw = safe[9];
 
                     let programmeFilms = [];
                     if (programmeFilmsRaw && programmeFilmsRaw.trim()) {
                         programmeFilms = programmeFilmsRaw
                             .split("||")
-                            .map(f => f.trim())
+                            .map(row => row.trim())
                             .filter(Boolean)
-                            .map(title => ({ title }));
+                            .map(row => {
+                                const [title, director, year, runtime, format] =
+                                    row.split("|").map(s => s.trim());
+
+                                return {
+                                    title: title || "",
+                                    director: director || "",
+                                    year: year || "",
+                                    runtime: runtime || "",
+                                    format: format || ""
+                                };
+                            })
+                            .filter(f => f.title);
                     }
 
                     if (!data[cinema]) data[cinema] = [];
@@ -192,11 +204,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     if (!film) {
                         film = {
-                            title: programmeTitle || titleText,
+                            title: titleText,
                             rawTitle: titleText,
                             titleLink,
                             notes,
-                            blurb,
                             programmeFilms,
                             details: [
                                 director || "",
@@ -244,13 +255,22 @@ document.addEventListener("DOMContentLoaded", function () {
                                         <div class="screening">
                                             ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
                                             <a href="${s.titleLink || '#'}">${s.title}</a>
-                                            ${s.blurb ? `<div class="screening-blurb">${s.blurb}</div>` : ""}
-                                            ${s.programmeFilms?.length ? `
+
+                                            ${s.programmeFilms.length ? `
                                                 <ul class="programme-films">
-                                                    ${s.programmeFilms.map(f => `<li>${f.title}</li>`).join("")}
+                                                    ${s.programmeFilms.map(f => `
+                                                        <li>
+                                                            <div class="pf-title">${f.title}</div>
+                                                            <div class="pf-meta">
+                                                                ${[f.director, f.year, f.runtime, f.format].filter(Boolean).join(", ")}
+                                                            </div>
+                                                        </li>
+                                                    `).join("")}
                                                 </ul>
-                                            ` : ""}
-                                            <div class="details">${s.details}</div>
+                                            ` : `
+                                                <div class="details">${s.details}</div>
+                                            `}
+
                                             <div class="time">${s.times.join(", ")}</div>
                                         </div>
                                     `).join("")}
