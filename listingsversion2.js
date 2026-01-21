@@ -208,7 +208,7 @@ document.addEventListener("DOMContentLoaded", function () {
                         ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
                         : [];
                     const year     = safe[7];
-                    const notes    = safe[8];
+                    
 
                     // Short-film programme column
                     const programmeFilmsRaw = safe[9];
