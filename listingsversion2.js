@@ -15,6 +15,16 @@ document.addEventListener("DOMContentLoaded", function () {
     let currentDate = atLocalMidnight(new Date());
 
     // -------------------------------------------------------
+    // LOCKED FILTERS (CINEMA / STRAND PAGES)
+    // -------------------------------------------------------
+    const LOCKED_CINEMA = null;
+    // e.g. "Barbican"
+
+    const LOCKED_NOTES_TAG = null;
+    // e.g. "Open City Documentary Festival"
+
+
+    // -------------------------------------------------------
     // ORDINALS
     // -------------------------------------------------------
     function getOrdinal(n) {
@@ -149,12 +159,31 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 sheet.values.slice(1).forEach(row => {
 
-                    // ⬇️ UPDATED LENGTH (now includes screening notes)
+                       // ⬇️ UPDATED LENGTH (now includes screening notes)
                     const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
 
                     const rowDate = safe[0];
                     const cinema  = safe[1];
+                    const notes   = safe[8];
+
                     if (rowDate !== formatted || !cinema) return;
+
+                    // -------------------------------------------------------
+                    // LOCKED CINEMA FILTER
+                    // -------------------------------------------------------
+                    if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
+
+                    // -------------------------------------------------------
+                    // LOCKED NOTES FILTER (STRAND / FESTIVAL)
+                    // -------------------------------------------------------
+                    if (
+                        LOCKED_NOTES_TAG &&
+                        (!notes || !notes.toLowerCase().includes(LOCKED_NOTES_TAG.toLowerCase()))
+                    ) {
+                        return;
+                    }
+
+
 
                     const rawTitle = safe[2].trim();
                     let titleText = rawTitle;
