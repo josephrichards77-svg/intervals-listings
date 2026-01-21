@@ -14,14 +14,20 @@ document.addEventListener("DOMContentLoaded", function () {
     // -------------------------------------------------------
     let currentDate = atLocalMidnight(new Date());
 
-    // -------------------------------------------------------
+       // -------------------------------------------------------
     // LOCKED FILTERS (CINEMA / STRAND PAGES)
     // -------------------------------------------------------
-    const LOCKED_CINEMA = null;
-    // e.g. "Barbican"
+    const LOCKED_CINEMA =
+        typeof window.LOCKED_CINEMA !== "undefined"
+            ? window.LOCKED_CINEMA
+            : null;
 
-    const LOCKED_NOTES_TAG = null;
-    // e.g. "Open City Documentary Festival"
+    const LOCKED_NOTES_TAG =
+        typeof window.LOCKED_NOTES_TAG !== "undefined"
+            ? window.LOCKED_NOTES_TAG
+            : null;
+
+
 
 
     // -------------------------------------------------------
