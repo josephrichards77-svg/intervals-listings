@@ -149,7 +149,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 sheet.values.slice(1).forEach(row => {
 
-                    const safe = Array.from({ length: 12 }, (_, i) => row[i] || "");
+                    // ⬇️ UPDATED LENGTH (now includes screening notes)
+                    const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
 
                     const rowDate = safe[0];
                     const cinema  = safe[1];
@@ -174,8 +175,11 @@ document.addEventListener("DOMContentLoaded", function () {
                     const year     = safe[7];
                     const notes    = safe[8];
 
-                    // Programme films live in column J (safe[9])
+                    // Short-film programme column
                     const programmeFilmsRaw = safe[9];
+
+                    // NEW: screening-specific notes
+                    const screeningNotes = safe[10];
 
                     let programmeFilms = [];
                     if (programmeFilmsRaw && programmeFilmsRaw.trim()) {
@@ -208,6 +212,7 @@ document.addEventListener("DOMContentLoaded", function () {
                             rawTitle: titleText,
                             titleLink,
                             notes,
+                            screeningNotes,
                             programmeFilms,
                             details: [
                                 director || "",
@@ -256,13 +261,19 @@ document.addEventListener("DOMContentLoaded", function () {
                                             ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
                                             <a href="${s.titleLink || '#'}">${s.title}</a>
 
+                                            ${s.screeningNotes ? `
+                                                <div class="screening-notes">${s.screeningNotes}</div>
+                                            ` : ""}
+
                                             ${s.programmeFilms.length ? `
                                                 <ul class="programme-films">
                                                     ${s.programmeFilms.map(f => `
                                                         <li>
                                                             <div class="pf-title">${f.title}</div>
                                                             <div class="pf-meta">
-                                                                ${[f.director, f.year, f.runtime, f.format].filter(Boolean).join(", ")}
+                                                                ${[f.director, f.year, f.runtime, f.format]
+                                                                    .filter(Boolean)
+                                                                    .join(", ")}
                                                             </div>
                                                         </li>
                                                     `).join("")}
