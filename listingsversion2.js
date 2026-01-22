@@ -43,9 +43,31 @@ const normalisedTag = window.LOCKED_NOTES_TAG
   normalisedNotes.includes(normalisedTag)
 );
 
-if (window.LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
-  return null;
+if (window.LOCKED_NOTES_TAG) {
+  const notesNorm = String(notes)
+    .toLowerCase()
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tagNorm = String(window.LOCKED_NOTES_TAG)
+    .toLowerCase()
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const notesTokens = new Set(notesNorm.split(" "));
+  const tagTokens   = tagNorm.split(" ").filter(Boolean);
+
+  const match = tagTokens.every(t => notesTokens.has(t));
+  if (!match) return null;
 }
+
+  
 
 
       return atLocalMidnight(new Date(date));
@@ -174,184 +196,191 @@ if (window.LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
     }
 
     // -------------------------------------------------------
-    // LOAD LISTINGS FOR DATE
-    // -------------------------------------------------------
-    function loadListingsFor(date) {
+// LOAD LISTINGS FOR DATE
+// -------------------------------------------------------
+function loadListingsFor(date) {
 
-        const container = document.getElementById("cinema-listings");
-        container.innerHTML = "";
+    const container = document.getElementById("cinema-listings");
+    container.innerHTML = "";
 
-        const formatted = [
-            date.getFullYear(),
-            String(date.getMonth() + 1).padStart(2, "0"),
-            String(date.getDate()).padStart(2, "0")
-        ].join("-");
+    const formatted = [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, "0"),
+        String(date.getDate()).padStart(2, "0")
+    ].join("-");
 
-        const url =
-            "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+    const url =
+        "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
-        fetch(url)
-            .then(r => r.json())
-            .then(sheet => {
+    fetch(url)
+        .then(r => r.json())
+        .then(sheet => {
 
-                if (!sheet.values || sheet.values.length < 2) {
-                    container.innerHTML =
-                        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
-                    return;
+            if (!sheet.values || sheet.values.length < 2) {
+                container.innerHTML =
+                    `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+                return;
+            }
+
+            const data = {};
+
+            sheet.values.slice(1).forEach(row => {
+
+                const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
+
+                const rowDate = safe[0];
+                const cinema  = safe[1];
+                const notes   = safe[8];
+
+                if (rowDate !== formatted || !cinema) return;
+                if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
+
+                // -------- robust notes tag match --------
+                if (LOCKED_NOTES_TAG) {
+                    const notesNorm = String(notes)
+                        .toLowerCase()
+                        .replace(/\u00a0/g, " ")
+                        .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+                        .replace(/[^a-z0-9]+/g, " ")
+                        .replace(/\s+/g, " ")
+                        .trim();
+
+                    const tagNorm = String(LOCKED_NOTES_TAG)
+                        .toLowerCase()
+                        .replace(/\u00a0/g, " ")
+                        .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+                        .replace(/[^a-z0-9]+/g, " ")
+                        .replace(/\s+/g, " ")
+                        .trim();
+
+                    const notesTokens = new Set(notesNorm.split(" "));
+                    const tagTokens   = tagNorm.split(" ").filter(Boolean);
+
+                    const match = tagTokens.every(t => notesTokens.has(t));
+                    if (!match) return;
+                }
+                // ---------------------------------------
+
+                const rawTitle = safe[2].trim();
+                let titleText = rawTitle;
+                let titleLink = "";
+
+                const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
+                if (m) {
+                    titleLink = m[1];
+                    titleText = m[2];
                 }
 
-                const data = {};
+                const director = safe[3];
+                const runtime  = safe[4];
+                const format   = normaliseFormat(safe[5]);
+                const times    = safe[6]
+                    ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
+                    : [];
+                const year     = safe[7];
+                const programmeFilmsRaw = safe[9];
+                const screeningNotes = safe[10];
 
-                sheet.values.slice(1).forEach(row => {
+                let programmeFilms = [];
+                if (programmeFilmsRaw) {
+                    programmeFilms = programmeFilmsRaw
+                        .split("||")
+                        .map(r => r.trim())
+                        .filter(Boolean)
+                        .map(r => {
+                            const [title, director, year, runtime, format] =
+                                r.split("|").map(s => s.trim());
+                            return { title, director, year, runtime, format };
+                        })
+                        .filter(f => f.title);
+                }
 
-                    const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
+                if (!data[cinema]) data[cinema] = [];
 
-                    const rowDate = safe[0];
-                    const cinema  = safe[1];
-                    const notes   = safe[8];
+                let film = data[cinema].find(f => f.rawTitle === titleText);
 
-                    if (rowDate !== formatted || !cinema) return;
+                if (!film) {
+                    film = {
+                        title: titleText,
+                        rawTitle: titleText,
+                        titleLink,
+                        notes,
+                        screeningNotes,
+                        programmeFilms,
+                        details: [
+                            director || "",
+                            year || "",
+                            runtime ? `${runtime} min` : "",
+                            format
+                        ].filter(Boolean).join(", "),
+                        times: [...times]
+                    };
+                    data[cinema].push(film);
+                } else {
+                    times.forEach(t => {
+                        if (!film.times.includes(t)) film.times.push(t);
+                    });
+                }
+            });
 
-                    if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
+            if (!Object.keys(data).length) {
+                container.innerHTML =
+                    `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+                return;
+            }
 
-                    const normalisedNotes = (notes || "")
-  .toLowerCase()
-  .replace(/\u00a0/g, " ")
-  .replace(/\s+/g, " ")
-  .trim();
+            Object.keys(data)
+                .sort((a, b) =>
+                    normaliseCinemaName(a).localeCompare(
+                        normaliseCinemaName(b), "en", { sensitivity: "base" }
+                    )
+                )
+                .forEach(cinema => {
 
-const normalisedTag = LOCKED_NOTES_TAG
-  ? LOCKED_NOTES_TAG
-      .toLowerCase()
-      .replace(/\u00a0/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-  : "";
+                    const screenings = data[cinema];
+                    screenings.sort((a, b) =>
+                        parseInt((a.times[0] || "9999").replace(":", "")) -
+                        parseInt((b.times[0] || "9999").replace(":", ""))
+                    );
 
-if (LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
-  return;
-}
-
-
-                    const rawTitle = safe[2].trim();
-                    let titleText = rawTitle;
-                    let titleLink = "";
-
-                    const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
-                    if (m) {
-                        titleLink = m[1];
-                        titleText = m[2];
-                    }
-
-                    const director = safe[3];
-                    const runtime  = safe[4];
-                    const format   = normaliseFormat(safe[5]);
-                    const times    = safe[6]
-                        ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
-                        : [];
-                    const year     = safe[7];
-                    const programmeFilmsRaw = safe[9];
-                    const screeningNotes = safe[10];
-
-                    let programmeFilms = [];
-                    if (programmeFilmsRaw) {
-                        programmeFilms = programmeFilmsRaw
-                            .split("||")
-                            .map(r => r.trim())
-                            .filter(Boolean)
-                            .map(r => {
-                                const [title, director, year, runtime, format] =
-                                    r.split("|").map(s => s.trim());
-                                return { title, director, year, runtime, format };
-                            })
-                            .filter(f => f.title);
-                    }
-
-                    if (!data[cinema]) data[cinema] = [];
-
-                    let film = data[cinema].find(f => f.rawTitle === titleText);
-
-                    if (!film) {
-                        film = {
-                            title: titleText,
-                            rawTitle: titleText,
-                            titleLink,
-                            notes,
-                            screeningNotes,
-                            programmeFilms,
-                            details: [
-                                director || "",
-                                year || "",
-                                runtime ? `${runtime} min` : "",
-                                format
-                            ].filter(Boolean).join(", "),
-                            times: [...times]
-                        };
-                        data[cinema].push(film);
-                    } else {
-                        times.forEach(t => {
-                            if (!film.times.includes(t)) film.times.push(t);
-                        });
-                    }
+                    container.innerHTML += `
+                        <div class="cinema">
+                            <h2>${cinema}</h2>
+                            <div class="screenings">
+                                ${screenings.map(s => `
+                                    <div class="screening">
+                                        ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                                        <a href="${s.titleLink || "#"}">${s.title}</a>
+                                        ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
+                                        ${s.programmeFilms.length
+                                            ? `<ul class="programme-films">
+                                                ${s.programmeFilms.map(f => `
+                                                    <li>
+                                                        <div class="pf-title">${f.title}</div>
+                                                        <div class="pf-meta">
+                                                            ${[f.director, f.year, f.runtime, f.format].filter(Boolean).join(", ")}
+                                                        </div>
+                                                    </li>
+                                                `).join("")}
+                                               </ul>`
+                                            : `<div class="details">${s.details}</div>`
+                                        }
+                                        <div class="time">${s.times.join(", ")}</div>
+                                    </div>
+                                `).join("")}
+                            </div>
+                        </div>
+                    `;
                 });
 
-                if (!Object.keys(data).length) {
-                    container.innerHTML =
-                        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
-                    return;
-                }
+            applyLastRowFix();
+        })
+        .catch(() => {
+            container.innerHTML =
+                `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
+        });
+}
 
-                Object.keys(data)
-                    .sort((a, b) =>
-                        normaliseCinemaName(a).localeCompare(
-                            normaliseCinemaName(b), "en", { sensitivity: "base" }
-                        )
-                    )
-                    .forEach(cinema => {
-
-                        const screenings = data[cinema];
-                        screenings.sort((a, b) =>
-                            parseInt((a.times[0] || "9999").replace(":", "")) -
-                            parseInt((b.times[0] || "9999").replace(":", ""))
-                        );
-
-                        container.innerHTML += `
-                            <div class="cinema">
-                                <h2>${cinema}</h2>
-                                <div class="screenings">
-                                    ${screenings.map(s => `
-                                        <div class="screening">
-                                            ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-                                            <a href="${s.titleLink || "#"}">${s.title}</a>
-                                            ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
-                                            ${s.programmeFilms.length
-                                                ? `<ul class="programme-films">
-                                                    ${s.programmeFilms.map(f => `
-                                                        <li>
-                                                            <div class="pf-title">${f.title}</div>
-                                                            <div class="pf-meta">
-                                                                ${[f.director, f.year, f.runtime, f.format].filter(Boolean).join(", ")}
-                                                            </div>
-                                                        </li>
-                                                    `).join("")}
-                                                   </ul>`
-                                                : `<div class="details">${s.details}</div>`
-                                            }
-                                            <div class="time">${s.times.join(", ")}</div>
-                                        </div>
-                                    `).join("")}
-                                </div>
-                            </div>
-                        `;
-                    });
-
-                applyLastRowFix();
-            })
-            .catch(() => {
-                container.innerHTML =
-                    `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
-            });
-    }
 
     // -------------------------------------------------------
     // NAVIGATION
