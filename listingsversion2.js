@@ -1,4 +1,4 @@
-console.log("✅ NEW listings.js LOADED", new Date().toISOString());
+console.log("✅ listings.js loaded", new Date().toISOString());
 
 document.addEventListener("DOMContentLoaded", function () {
 
@@ -10,12 +10,12 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // CURRENT DATE (LOCKED)
+    // STATE
     // -------------------------------------------------------
     let currentDate = atLocalMidnight(new Date());
 
-       // -------------------------------------------------------
-    // LOCKED FILTERS (CINEMA / STRAND PAGES)
+    // -------------------------------------------------------
+    // LOCKED FILTERS (CINEMA / STRAND / FESTIVAL PAGES)
     // -------------------------------------------------------
     const LOCKED_CINEMA =
         typeof window.LOCKED_CINEMA !== "undefined"
@@ -27,11 +27,39 @@ document.addEventListener("DOMContentLoaded", function () {
             ? window.LOCKED_NOTES_TAG
             : null;
 
+    // -------------------------------------------------------
+    // FIRST SCREENING DATE (FOR PARTIAL LISTINGS)
+    // -------------------------------------------------------
+    function getFirstScreeningDateFromSheet(values) {
+        const dates = values
+            .slice(1)
+            .map(row => {
+                const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
+                const rowDate = safe[0];
+                const cinema  = safe[1];
+                const notes   = safe[8];
 
+                if (!rowDate || !cinema) return null;
 
+                if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return null;
+
+                if (
+                    LOCKED_NOTES_TAG &&
+                    (!notes || !notes.toLowerCase().includes(LOCKED_NOTES_TAG.toLowerCase()))
+                ) {
+                    return null;
+                }
+
+                return atLocalMidnight(new Date(rowDate));
+            })
+            .filter(Boolean)
+            .sort((a, b) => a - b);
+
+        return dates.length ? dates[0] : null;
+    }
 
     // -------------------------------------------------------
-    // ORDINALS
+    // ORDINALS + DATE FORMAT
     // -------------------------------------------------------
     function getOrdinal(n) {
         if (n > 3 && n < 21) return "th";
@@ -43,9 +71,6 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    // -------------------------------------------------------
-    // FULL DATE
-    // -------------------------------------------------------
     function formatFullDate(date) {
         const day = date.getDate();
         const suffix = getOrdinal(day);
@@ -61,7 +86,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // -------------------------------------------------------
-    // FORMAT NORMALISER
+    // NORMALISERS
     // -------------------------------------------------------
     function normaliseFormat(fmt) {
         if (!fmt || fmt.trim() === "") return "DCP";
@@ -76,9 +101,6 @@ document.addEventListener("DOMContentLoaded", function () {
         return fmt.trim();
     }
 
-    // -------------------------------------------------------
-    // TIME NORMALISER
-    // -------------------------------------------------------
     function normaliseTime(t) {
         if (!t) return "";
         let clean = t.replace(/\./g, "").trim().toUpperCase();
@@ -97,9 +119,6 @@ document.addEventListener("DOMContentLoaded", function () {
         return `${String(hh).padStart(2, "0")}:${mm}`;
     }
 
-    // -------------------------------------------------------
-    // CINEMA SORT NORMALISER
-    // -------------------------------------------------------
     function normaliseCinemaName(name) {
         return name.replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
     }
@@ -108,11 +127,11 @@ document.addEventListener("DOMContentLoaded", function () {
     // LAST ROW FIX
     // -------------------------------------------------------
     function applyLastRowFix() {
-        document.querySelectorAll('.screenings').forEach(container => {
+        document.querySelectorAll(".screenings").forEach(container => {
             const cards = Array.from(container.children);
             if (!cards.length) return;
 
-            cards.forEach(c => c.classList.remove('last-row-card'));
+            cards.forEach(c => c.classList.remove("last-row-card"));
 
             const firstTop = cards[0].offsetTop;
             let columns = 0;
@@ -129,13 +148,13 @@ document.addEventListener("DOMContentLoaded", function () {
                     : cards.length - remainder;
 
             cards.forEach((c, i) => {
-                if (i >= start) c.classList.add('last-row-card');
+                if (i >= start) c.classList.add("last-row-card");
             });
         });
     }
 
     // -------------------------------------------------------
-    // LOAD LISTINGS
+    // LOAD LISTINGS FOR DATE
     // -------------------------------------------------------
     function loadListingsFor(date) {
 
@@ -165,7 +184,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 sheet.values.slice(1).forEach(row => {
 
-                       // ⬇️ UPDATED LENGTH (now includes screening notes)
                     const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
 
                     const rowDate = safe[0];
@@ -174,22 +192,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     if (rowDate !== formatted || !cinema) return;
 
-                    // -------------------------------------------------------
-                    // LOCKED CINEMA FILTER
-                    // -------------------------------------------------------
                     if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
 
-                    // -------------------------------------------------------
-                    // LOCKED NOTES FILTER (STRAND / FESTIVAL)
-                    // -------------------------------------------------------
                     if (
                         LOCKED_NOTES_TAG &&
                         (!notes || !notes.toLowerCase().includes(LOCKED_NOTES_TAG.toLowerCase()))
                     ) {
                         return;
                     }
-
-
 
                     const rawTitle = safe[2].trim();
                     let titleText = rawTitle;
@@ -208,31 +218,19 @@ document.addEventListener("DOMContentLoaded", function () {
                         ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
                         : [];
                     const year     = safe[7];
-                    
-
-                    // Short-film programme column
                     const programmeFilmsRaw = safe[9];
-
-                    // NEW: screening-specific notes
                     const screeningNotes = safe[10];
 
                     let programmeFilms = [];
-                    if (programmeFilmsRaw && programmeFilmsRaw.trim()) {
+                    if (programmeFilmsRaw) {
                         programmeFilms = programmeFilmsRaw
                             .split("||")
-                            .map(row => row.trim())
+                            .map(r => r.trim())
                             .filter(Boolean)
-                            .map(row => {
+                            .map(r => {
                                 const [title, director, year, runtime, format] =
-                                    row.split("|").map(s => s.trim());
-
-                                return {
-                                    title: title || "",
-                                    director: director || "",
-                                    year: year || "",
-                                    runtime: runtime || "",
-                                    format: format || ""
-                                };
+                                    r.split("|").map(s => s.trim());
+                                return { title, director, year, runtime, format };
                             })
                             .filter(f => f.title);
                     }
@@ -252,9 +250,7 @@ document.addEventListener("DOMContentLoaded", function () {
                             details: [
                                 director || "",
                                 year || "",
-                                runtime
-                                    ? (String(runtime).includes("min") ? runtime : runtime + " min")
-                                    : "",
+                                runtime ? `${runtime} min` : "",
                                 format
                             ].filter(Boolean).join(", "),
                             times: [...times]
@@ -294,29 +290,21 @@ document.addEventListener("DOMContentLoaded", function () {
                                     ${screenings.map(s => `
                                         <div class="screening">
                                             ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-                                            <a href="${s.titleLink || '#'}">${s.title}</a>
-
-                                            ${s.screeningNotes ? `
-                                                <div class="screening-notes">${s.screeningNotes}</div>
-                                            ` : ""}
-
-                                            ${s.programmeFilms.length ? `
-                                                <ul class="programme-films">
+                                            <a href="${s.titleLink || "#"}">${s.title}</a>
+                                            ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
+                                            ${s.programmeFilms.length
+                                                ? `<ul class="programme-films">
                                                     ${s.programmeFilms.map(f => `
                                                         <li>
                                                             <div class="pf-title">${f.title}</div>
                                                             <div class="pf-meta">
-                                                                ${[f.director, f.year, f.runtime, f.format]
-                                                                    .filter(Boolean)
-                                                                    .join(", ")}
+                                                                ${[f.director, f.year, f.runtime, f.format].filter(Boolean).join(", ")}
                                                             </div>
                                                         </li>
                                                     `).join("")}
-                                                </ul>
-                                            ` : `
-                                                <div class="details">${s.details}</div>
-                                            `}
-
+                                                   </ul>`
+                                                : `<div class="details">${s.details}</div>`
+                                            }
                                             <div class="time">${s.times.join(", ")}</div>
                                         </div>
                                     `).join("")}
@@ -327,8 +315,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 applyLastRowFix();
             })
-            .catch(err => {
-                console.error("Listings fetch error:", err);
+            .catch(() => {
                 container.innerHTML =
                     `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
             });
@@ -364,10 +351,27 @@ document.addEventListener("DOMContentLoaded", function () {
     };
 
     // -------------------------------------------------------
-    // INIT
+    // INIT (DETERMINE CALENDAR START)
     // -------------------------------------------------------
-    updateCalendar();
-    loadListingsFor(currentDate);
-    window.addEventListener("resize", applyLastRowFix);
+    const initURL =
+        "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
+    fetch(initURL)
+        .then(r => r.json())
+        .then(sheet => {
+            if (sheet.values && sheet.values.length > 1) {
+                const first = getFirstScreeningDateFromSheet(sheet.values);
+                if (first && first > currentDate) {
+                    currentDate = first;
+                }
+            }
+            updateCalendar();
+            loadListingsFor(currentDate);
+        })
+        .catch(() => {
+            updateCalendar();
+            loadListingsFor(currentDate);
+        });
+
+    window.addEventListener("resize", applyLastRowFix);
 });
