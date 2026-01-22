@@ -33,6 +33,16 @@ const normalisedTag = window.LOCKED_NOTES_TAG
       .trim()
   : "";
 
+        console.log(
+  "EARLIEST CHECK →",
+  date,
+  JSON.stringify(normalisedNotes),
+  "TAG:",
+  JSON.stringify(normalisedTag),
+  "MATCH?",
+  normalisedNotes.includes(normalisedTag)
+);
+
 if (window.LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
   return null;
 }
