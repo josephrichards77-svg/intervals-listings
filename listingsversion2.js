@@ -10,10 +10,34 @@ document.addEventListener("DOMContentLoaded", function () {
         return new Date(d.getFullYear(), d.getMonth(), d.getDate());
     }
 
+    function getEarliestMatchingDate(values) {
+  return values
+    .slice(1)
+    .map(row => {
+      const date  = row[0];
+      const notes = row[8] || "";
+
+      if (!date) return null;
+
+      if (
+        window.LOCKED_NOTES_TAG &&
+        !notes.toLowerCase().includes(window.LOCKED_NOTES_TAG.toLowerCase())
+      ) {
+        return null;
+      }
+
+      return atLocalMidnight(new Date(date));
+    })
+    .filter(Boolean)
+    .sort((a, b) => a - b)[0] || null;
+}
+
+
     // -------------------------------------------------------
     // STATE
     // -------------------------------------------------------
-    let currentDate = atLocalMidnight(new Date());
+    let currentDate = null;
+
 
     // -------------------------------------------------------
     // LOCKED FILTERS (CINEMA / STRAND / FESTIVAL PAGES)
@@ -82,9 +106,11 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     function updateCalendar() {
-        document.getElementById("calendar-date").textContent =
-            formatFullDate(currentDate);
-    }
+    if (!currentDate) return;
+    document.getElementById("calendar-date").textContent =
+        formatFullDate(currentDate);
+}
+
 
     // -------------------------------------------------------
     // NORMALISERS
@@ -350,27 +376,7 @@ document.addEventListener("DOMContentLoaded", function () {
         updateCalendar();
         loadListingsFor(currentDate);
 
-        function getEarliestMatchingDate(values) {
-  return values
-    .slice(1)
-    .map(row => {
-      const date  = row[0];
-      const notes = row[8] || "";
 
-      if (!date) return null;
-
-      if (
-        window.LOCKED_NOTES_TAG &&
-        !notes.toLowerCase().includes(window.LOCKED_NOTES_TAG.toLowerCase())
-      ) {
-        return null;
-      }
-
-      return atLocalMidnight(new Date(date));
-    })
-    .filter(Boolean)
-    .sort((a, b) => a - b)[0] || null;
-}
 
     };
 
