@@ -1,4 +1,5 @@
-console.log("✅ listings.js loaded", new Date().toISOString());
+console.log("🔥 LSFF FESTIVAL VERSION LOADED");
+
 
 document.addEventListener("DOMContentLoaded", function () {
 
