@@ -361,9 +361,10 @@ document.addEventListener("DOMContentLoaded", function () {
         .then(sheet => {
             if (sheet.values && sheet.values.length > 1) {
                 const first = getFirstScreeningDateFromSheet(sheet.values);
-                if (first && first > currentDate) {
-                    currentDate = first;
-                }
+                if (first) {
+    currentDate = first;
+}
+
             }
             updateCalendar();
             loadListingsFor(currentDate);
