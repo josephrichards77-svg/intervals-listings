@@ -64,36 +64,7 @@ if (window.LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
             ? window.LOCKED_NOTES_TAG
             : null;
 
-    // -------------------------------------------------------
-    // FIRST SCREENING DATE (FOR PARTIAL LISTINGS)
-    // -------------------------------------------------------
     
-        const dates = values
-            .slice(1)
-            .map(row => {
-                const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
-                const rowDate = safe[0];
-                const cinema  = safe[1];
-                const notes   = safe[8];
-
-                if (!rowDate || !cinema) return null;
-
-                if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return null;
-
-                if (
-                    LOCKED_NOTES_TAG &&
-                    (!notes || !notes.toLowerCase().includes(LOCKED_NOTES_TAG.toLowerCase()))
-                ) {
-                    return null;
-                }
-
-                return atLocalMidnight(new Date(rowDate));
-            })
-            .filter(Boolean)
-            .sort((a, b) => a - b);
-
-        return dates.length ? dates[0] : null;
-    }
 
     // -------------------------------------------------------
     // ORDINALS + DATE FORMAT
