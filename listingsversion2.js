@@ -19,12 +19,24 @@ document.addEventListener("DOMContentLoaded", function () {
 
       if (!date) return null;
 
-      if (
-        window.LOCKED_NOTES_TAG &&
-        !notes.toLowerCase().includes(window.LOCKED_NOTES_TAG.toLowerCase())
-      ) {
-        return null;
-      }
+     const normalisedNotes = notes
+  .toLowerCase()
+  .replace(/\u00a0/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const normalisedTag = window.LOCKED_NOTES_TAG
+  ? window.LOCKED_NOTES_TAG
+      .toLowerCase()
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  : "";
+
+if (window.LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
+  return null;
+}
+
 
       return atLocalMidnight(new Date(date));
     })
@@ -55,7 +67,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // -------------------------------------------------------
     // FIRST SCREENING DATE (FOR PARTIAL LISTINGS)
     // -------------------------------------------------------
-    function getFirstScreeningDateFromSheet(values) {
+    
         const dates = values
             .slice(1)
             .map(row => {
@@ -221,12 +233,24 @@ document.addEventListener("DOMContentLoaded", function () {
 
                     if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
 
-                    if (
-                        LOCKED_NOTES_TAG &&
-                        (!notes || !notes.toLowerCase().includes(LOCKED_NOTES_TAG.toLowerCase()))
-                    ) {
-                        return;
-                    }
+                    const normalisedNotes = (notes || "")
+  .toLowerCase()
+  .replace(/\u00a0/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const normalisedTag = LOCKED_NOTES_TAG
+  ? LOCKED_NOTES_TAG
+      .toLowerCase()
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  : "";
+
+if (LOCKED_NOTES_TAG && !normalisedNotes.includes(normalisedTag)) {
+  return;
+}
+
 
                     const rawTitle = safe[2].trim();
                     let titleText = rawTitle;
