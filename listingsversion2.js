@@ -348,31 +348,54 @@ document.addEventListener("DOMContentLoaded", function () {
         currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
         updateCalendar();
         loadListingsFor(currentDate);
-    };
 
-    // -------------------------------------------------------
-    // INIT (DETERMINE CALENDAR START)
-    // -------------------------------------------------------
-    const initURL =
-        "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+        function getEarliestMatchingDate(values) {
+  return values
+    .slice(1)
+    .map(row => {
+      const date  = row[0];
+      const notes = row[8] || "";
 
-    fetch(initURL)
-        .then(r => r.json())
-        .then(sheet => {
-            if (sheet.values && sheet.values.length > 1) {
-                const first = getFirstScreeningDateFromSheet(sheet.values);
-                if (first) {
-    currentDate = first;
+      if (!date) return null;
+
+      if (
+        window.LOCKED_NOTES_TAG &&
+        !notes.toLowerCase().includes(window.LOCKED_NOTES_TAG.toLowerCase())
+      ) {
+        return null;
+      }
+
+      return atLocalMidnight(new Date(date));
+    })
+    .filter(Boolean)
+    .sort((a, b) => a - b)[0] || null;
 }
 
-            }
-            updateCalendar();
-            loadListingsFor(currentDate);
-        })
-        .catch(() => {
-            updateCalendar();
-            loadListingsFor(currentDate);
-        });
+    };
 
-    window.addEventListener("resize", applyLastRowFix);
+   // -------------------------------------------------------
+// INIT (DETERMINE CALENDAR START — FESTIVAL SAFE)
+// -------------------------------------------------------
+const initURL =
+  "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+
+fetch(initURL)
+  .then(r => r.json())
+  .then(sheet => {
+    if (sheet.values && sheet.values.length > 1) {
+      const first = getEarliestMatchingDate(sheet.values);
+      if (first) {
+        currentDate = first;
+      }
+    }
+    updateCalendar();
+    loadListingsFor(currentDate);
+  })
+  .catch(() => {
+    updateCalendar();
+    loadListingsFor(currentDate);
+  });
+
+window.addEventListener("resize", applyLastRowFix);
 });
+
