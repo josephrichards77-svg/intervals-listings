@@ -380,8 +380,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     };
 
-   // -------------------------------------------------------
-// INIT (DETERMINE CALENDAR START — FESTIVAL SAFE)
+// -------------------------------------------------------
+// INIT (DETERMINE CALENDAR START — CONTEXT AWARE)
 // -------------------------------------------------------
 const initURL =
   "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
@@ -389,20 +389,28 @@ const initURL =
 fetch(initURL)
   .then(r => r.json())
   .then(sheet => {
-    if (sheet.values && sheet.values.length > 1) {
+
+    // DEFAULT: global listings start today
+    currentDate = atLocalMidnight(new Date());
+
+    // FESTIVAL / LOCKED PAGES ONLY
+    if (window.LOCKED_NOTES_TAG && sheet.values && sheet.values.length > 1) {
       const first = getEarliestMatchingDate(sheet.values);
       if (first) {
         currentDate = first;
       }
     }
+
     updateCalendar();
     loadListingsFor(currentDate);
   })
   .catch(() => {
+    currentDate = atLocalMidnight(new Date());
     updateCalendar();
     loadListingsFor(currentDate);
   });
 
 window.addEventListener("resize", applyLastRowFix);
 });
+
 
