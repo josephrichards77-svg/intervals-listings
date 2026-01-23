@@ -1,4 +1,4 @@
-console.log("FORMAT CHECK:", format, "→", isFilm);
+
 
 
 
