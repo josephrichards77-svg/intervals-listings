@@ -284,7 +284,8 @@ function loadListingsFor(date) {
                 const director = safe[3];
                 const runtime  = safe[4];
                 const format   = normaliseFormat(safe[5]);
-                const isFilm = /MM$/.test(format);
+                const isFilm = /(16mm|35mm|70mm)/i.test(format);
+
 
 if (FILM_ONLY && !isFilm) return;
 
