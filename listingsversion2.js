@@ -1,4 +1,5 @@
-console.log("🔥 LSFF FESTIVAL VERSION LOADED");
+console.log("FORMAT CHECK:", format, "→", isFilm);
+
 
 
 document.addEventListener("DOMContentLoaded", function () {
