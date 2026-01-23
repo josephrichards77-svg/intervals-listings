@@ -81,6 +81,15 @@ if (window.LOCKED_NOTES_TAG) {
     // STATE
     // -------------------------------------------------------
     let currentDate = null;
+let FILM_ONLY = false;
+
+    const filmFilter = document.getElementById("filter-film");
+
+function resetFilmFilter() {
+  FILM_ONLY = false;
+  filmFilter?.classList.remove("active");
+}
+
 
 
     // -------------------------------------------------------
@@ -274,6 +283,10 @@ function loadListingsFor(date) {
                 const director = safe[3];
                 const runtime  = safe[4];
                 const format   = normaliseFormat(safe[5]);
+                const isFilm = /MM$/.test(format);
+
+if (FILM_ONLY && !isFilm) return;
+
                 const times    = safe[6]
                     ? String(safe[6]).split(",").map(t => normaliseTime(t.trim())).filter(Boolean)
                     : [];
@@ -337,11 +350,15 @@ function loadListingsFor(date) {
                 )
                 .forEach(cinema => {
 
-                    const screenings = data[cinema];
-                    screenings.sort((a, b) =>
-                        parseInt((a.times[0] || "9999").replace(":", "")) -
-                        parseInt((b.times[0] || "9999").replace(":", ""))
-                    );
+    const screenings = data[cinema];
+
+    if (!screenings.length) return;
+
+    screenings.sort((a, b) =>
+        parseInt((a.times[0] || "9999").replace(":", "")) -
+        parseInt((b.times[0] || "9999").replace(":", ""))
+    );
+
 
                     container.innerHTML += `
                         <div class="cinema">
@@ -380,39 +397,67 @@ function loadListingsFor(date) {
                 `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
         });
 }
-
-
     // -------------------------------------------------------
-    // NAVIGATION
-    // -------------------------------------------------------
-    document.getElementById("prev-btn").onclick = () => {
-        currentDate = atLocalMidnight(
-            new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - 1)
-        );
-        updateCalendar();
-        loadListingsFor(currentDate);
-    };
+// FORMAT FILTER BUTTONS
+// -------------------------------------------------------
 
-    document.getElementById("next-btn").onclick = () => {
-        currentDate = atLocalMidnight(
-            new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() + 1)
-        );
-        updateCalendar();
-        loadListingsFor(currentDate);
-    };
 
-    document.getElementById("calendar-date").onclick = () => {
-        document.getElementById("date-picker").showPicker();
-    };
-
-    document.getElementById("date-picker").onchange = e => {
-        currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
-        updateCalendar();
-        loadListingsFor(currentDate);
+if (filmFilter) {
+  filmFilter.onclick = () => {
+    FILM_ONLY = !FILM_ONLY;
+    filmFilter.classList.toggle("active", FILM_ONLY);
+    loadListingsFor(currentDate);
+  };
+}
 
 
 
-    };
+
+   // -------------------------------------------------------
+// NAVIGATION
+// -------------------------------------------------------
+document.getElementById("prev-btn").onclick = () => {
+  currentDate = atLocalMidnight(
+    new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate() - 1
+    )
+  );
+
+  resetFilmFilter();
+  updateCalendar();
+  loadListingsFor(currentDate);
+};
+
+document.getElementById("next-btn").onclick = () => {
+  currentDate = atLocalMidnight(
+    new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate() + 1
+    )
+  );
+
+  resetFilmFilter();
+  updateCalendar();
+  loadListingsFor(currentDate);
+};
+
+document.getElementById("calendar-date").onclick = () => {
+  document.getElementById("date-picker").showPicker();
+};
+
+document.getElementById("date-picker").onchange = e => {
+  currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
+
+  resetFilmFilter();
+  updateCalendar();
+  loadListingsFor(currentDate);
+};
+
+
+
 
 // -------------------------------------------------------
 // INIT (DETERMINE CALENDAR START — CONTEXT AWARE)
