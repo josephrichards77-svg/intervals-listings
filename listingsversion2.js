@@ -131,17 +131,10 @@ function resetFilmFilter() {
     }
 
     function updateCalendar() {
-  if (!currentDate) return;
-
-  const input = document.getElementById("calendar-date");
-
-  input.value = [
-    currentDate.getFullYear(),
-    String(currentDate.getMonth() + 1).padStart(2, "0"),
-    String(currentDate.getDate()).padStart(2, "0")
-  ].join("-");
+    if (!currentDate) return;
+    document.getElementById("calendar-date").textContent =
+        formatFullDate(currentDate);
 }
-
 
 
     // -------------------------------------------------------
@@ -453,14 +446,17 @@ document.getElementById("next-btn").onclick = () => {
   loadListingsFor(currentDate);
 };
 
-document.getElementById("calendar-date").onchange = e => {
-  currentDate = atLocalMidnight(new Date(e.target.value));
+document.getElementById("calendar-date").onclick = () => {
+  document.getElementById("date-picker").showPicker();
+};
+
+document.getElementById("date-picker").onchange = e => {
+  currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
 
   resetFilmFilter();
   updateCalendar();
   loadListingsFor(currentDate);
 };
-
 
 
 
@@ -497,5 +493,3 @@ fetch(initURL)
 
 window.addEventListener("resize", applyLastRowFix);
 });
-
-
