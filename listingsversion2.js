@@ -447,8 +447,16 @@ document.getElementById("next-btn").onclick = () => {
 };
 
 document.getElementById("calendar-date").onclick = () => {
-  document.getElementById("date-picker").showPicker();
+  const picker = document.getElementById("date-picker");
+
+  if (picker.showPicker) {
+    picker.showPicker();        // Chrome desktop
+  } else {
+    picker.focus();             // mobile Safari / Android
+    picker.click();
+  }
 };
+
 
 document.getElementById("date-picker").onchange = e => {
   currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
