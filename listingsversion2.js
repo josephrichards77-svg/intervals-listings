@@ -5,6 +5,14 @@
 document.addEventListener("DOMContentLoaded", function () {
 
     // -------------------------------------------------------
+// SCROLL AUTHORITY — PREVENT BROWSER JUMPING
+// -------------------------------------------------------
+if ('scrollRestoration' in history) {
+  history.scrollRestoration = 'manual';
+}
+
+
+    // -------------------------------------------------------
     // DATE SAFETY — FORCE LOCAL MIDNIGHT
     // -------------------------------------------------------
     function atLocalMidnight(d) {
@@ -210,6 +218,9 @@ function resetFilmFilter() {
 // -------------------------------------------------------
 function loadListingsFor(date) {
 
+    const scrollY = window.scrollY;
+
+
     const container = document.getElementById("cinema-listings");
     container.innerHTML = "";
 
@@ -393,6 +404,11 @@ if (FILM_ONLY && !isFilm) return;
                 });
 
             applyLastRowFix();
+
+            requestAnimationFrame(() => {
+  window.scrollTo(0, scrollY);
+});
+
         })
         .catch(() => {
             container.innerHTML =
