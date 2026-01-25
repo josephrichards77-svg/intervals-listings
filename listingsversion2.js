@@ -350,10 +350,12 @@ if (FILM_ONLY && !isFilm) return;
             });
 
             if (!Object.keys(data).length) {
-                container.innerHTML =
-                    `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
-                return;
-            }
+    container.innerHTML =
+        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+    restoreScroll();
+    return;
+}
+
 
             Object.keys(data)
                 .sort((a, b) =>
