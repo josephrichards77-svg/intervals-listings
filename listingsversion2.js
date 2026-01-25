@@ -217,6 +217,9 @@ function resetFilmFilter() {
 // LOAD LISTINGS FOR DATE
 // -------------------------------------------------------
 function loadListingsFor(date) {
+    currentDate = date;
+updateCalendar(); // ← immediate calendar update (pre-fetch)
+
 
     const scrollY = window.scrollY;
 
