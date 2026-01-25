@@ -130,13 +130,14 @@ function resetFilmFilter() {
     }
 
     function formatFullDate(date) {
-        const day = date.getDate();
-        const suffix = getOrdinal(day);
-        const weekday = date.toLocaleDateString("en-GB", { weekday: "long" });
-        const month = date.toLocaleDateString("en-GB", { month: "long" });
-        const year = date.getFullYear();
-        return `${weekday}, ${month} ${day}${suffix}, ${year}`;
-    }
+    const day = date.getDate();
+    const suffix = getOrdinal(day);
+    const weekday = date.toLocaleDateString("en-GB", { weekday: "long" });
+    const month = date.toLocaleDateString("en-GB", { month: "long" });
+    const year = date.getFullYear();
+    return `${weekday}, ${day}${suffix} ${month} ${year}`;
+}
+
 
     function updateCalendar() {
     if (!currentDate) return;
@@ -534,15 +535,18 @@ if (window.LOCKED_NOTES_TAG && sheet.values && sheet.values.length > 1) {
 }
 
 
+                updateCalendar();
         loadListingsFor(currentDate);
+
     
 
   })
-  .catch(() => {
+    .catch(() => {
     currentDate = atLocalMidnight(new Date());
+    updateCalendar();
     loadListingsFor(currentDate);
-    
-});
+  });
+
 
 
 window.addEventListener("resize", applyLastRowFix);
