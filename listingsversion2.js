@@ -416,9 +416,11 @@ if (FILM_ONLY && !isFilm) return;
 
             applyLastRowFix();
 
-            requestAnimationFrame(() => {
+requestAnimationFrame(() => {
   window.scrollTo(0, scrollY);
+  updateCalendar();
 });
+
 
         })
         .catch(() => {
@@ -457,10 +459,9 @@ document.getElementById("prev-btn").onclick = () => {
   );
 
   resetFilmFilter();
-loadListingsFor(currentDate);
-updateCalendar();   // ← move to last
-
+  loadListingsFor(currentDate);
 };
+
 
 document.getElementById("next-btn").onclick = () => {
   currentDate = atLocalMidnight(
@@ -473,8 +474,9 @@ document.getElementById("next-btn").onclick = () => {
 
   resetFilmFilter();
 loadListingsFor(currentDate);
-updateCalendar();   //
-};
+    };
+
+
 
 document.getElementById("calendar-date").onclick = () => {
   const picker = document.getElementById("date-picker");
@@ -495,8 +497,9 @@ document.getElementById("date-picker").onchange = e => {
 
   resetFilmFilter();
   loadListingsFor(currentDate);
-  updateCalendar();   // ← last
 };
+
+
 
 
 
@@ -524,13 +527,13 @@ fetch(initURL)
     }
 
         loadListingsFor(currentDate);
-    updateCalendar();
+    
 
   })
   .catch(() => {
     currentDate = atLocalMidnight(new Date());
     loadListingsFor(currentDate);
-    updateCalendar();
+    
 });
 
 
