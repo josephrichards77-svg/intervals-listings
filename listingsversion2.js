@@ -559,3 +559,18 @@ if (window.LOCKED_NOTES_TAG && sheet.values && sheet.values.length > 1) {
 
 window.addEventListener("resize", applyLastRowFix);
 });
+// FORCE /series/ LINKS TO OPEN IN SAME TAB (OVERRIDES WP / YOAST)
+document.addEventListener("click", e => {
+  const a = e.target.closest('a[href]');
+  if (!a) return;
+
+  if (a.href.startsWith("https://intervalslondon.com/series/")) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    a.removeAttribute("target");
+    a.removeAttribute("rel");
+
+    window.location.href = a.href;
+  }
+}, true); // ← 👈 CAPTURE PHASE (THIS IS THE KEY)
