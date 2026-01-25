@@ -220,6 +220,13 @@ function loadListingsFor(date) {
 
     const scrollY = window.scrollY;
 
+    function restoreScroll() {
+  requestAnimationFrame(() => {
+    window.scrollTo(0, scrollY);
+  });
+}
+
+
 
     const container = document.getElementById("cinema-listings");
     container.innerHTML = "";
@@ -238,10 +245,12 @@ function loadListingsFor(date) {
         .then(sheet => {
 
             if (!sheet.values || sheet.values.length < 2) {
-                container.innerHTML =
-                    `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
-                return;
-            }
+    container.innerHTML =
+        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+    restoreScroll();
+    return;
+}
+
 
             const data = {};
 
@@ -413,9 +422,11 @@ if (FILM_ONLY && !isFilm) return;
 
         })
         .catch(() => {
-            container.innerHTML =
-                `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
-        });
+    container.innerHTML =
+        `<p style="text-align:center;padding:20px;">Unable to load listings.</p>`;
+    restoreScroll();
+});
+
 }
     // -------------------------------------------------------
 // FORMAT FILTER BUTTONS
@@ -446,8 +457,9 @@ document.getElementById("prev-btn").onclick = () => {
   );
 
   resetFilmFilter();
-  updateCalendar();
-  loadListingsFor(currentDate);
+loadListingsFor(currentDate);
+updateCalendar();   // ← move to last
+
 };
 
 document.getElementById("next-btn").onclick = () => {
@@ -460,8 +472,8 @@ document.getElementById("next-btn").onclick = () => {
   );
 
   resetFilmFilter();
-  updateCalendar();
-  loadListingsFor(currentDate);
+loadListingsFor(currentDate);
+updateCalendar();   //
 };
 
 document.getElementById("calendar-date").onclick = () => {
@@ -477,12 +489,15 @@ document.getElementById("calendar-date").onclick = () => {
 
 
 document.getElementById("date-picker").onchange = e => {
+  document.activeElement?.blur(); // stops Safari nudging
+
   currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
 
   resetFilmFilter();
-  updateCalendar();
   loadListingsFor(currentDate);
+  updateCalendar();   // ← last
 };
+
 
 
 
@@ -508,14 +523,16 @@ fetch(initURL)
       }
     }
 
+        loadListingsFor(currentDate);
     updateCalendar();
-    loadListingsFor(currentDate);
+
   })
   .catch(() => {
     currentDate = atLocalMidnight(new Date());
-    updateCalendar();
     loadListingsFor(currentDate);
-  });
+    updateCalendar();
+});
+
 
 window.addEventListener("resize", applyLastRowFix);
 });
