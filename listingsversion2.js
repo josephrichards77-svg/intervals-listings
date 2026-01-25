@@ -415,10 +415,18 @@ if (FILM_ONLY && !isFilm) return;
 
             applyLastRowFix();
 
+// FORCE SERIES LINKS TO OPEN IN SAME TAB
+document
+  .querySelectorAll('#cinema-listings a[href*="/series/"]')
+  .forEach(a => {
+    a.removeAttribute("target");
+    a.removeAttribute("rel");
+  });
+
 requestAnimationFrame(() => {
   window.scrollTo(0, scrollY);
-  
 });
+
 
 
         })
