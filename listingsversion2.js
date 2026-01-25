@@ -213,60 +213,55 @@ function resetFilmFilter() {
         });
     }
 
-    // -------------------------------------------------------
+// -------------------------------------------------------
 // LOAD LISTINGS FOR DATE
 // -------------------------------------------------------
 function loadListingsFor(date) {
     currentDate = date;
-updateCalendar(); // ← immediate calendar update (pre-fetch)
 
+  const scrollY = window.scrollY;
 
-    const scrollY = window.scrollY;
+  function restoreScroll() {
+    requestAnimationFrame(() => {
+      window.scrollTo(0, scrollY);
+    });
+  }
 
-    function restoreScroll() {
-  requestAnimationFrame(() => {
-    window.scrollTo(0, scrollY);
-  });
-}
+  const container = document.getElementById("cinema-listings");
+  container.innerHTML = "";
 
+  const formatted = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
 
+  const url =
+    "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
 
-    const container = document.getElementById("cinema-listings");
-    container.innerHTML = "";
+  fetch(url)
+    .then(r => r.json())
+    .then(sheet => {
 
-    const formatted = [
-        date.getFullYear(),
-        String(date.getMonth() + 1).padStart(2, "0"),
-        String(date.getDate()).padStart(2, "0")
-    ].join("-");
+      if (!sheet.values || sheet.values.length < 2) {
+        container.innerHTML =
+          `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
+        restoreScroll();
+        return;
+      }
 
-    const url =
-        "https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g";
+      const data = {};
 
-    fetch(url)
-        .then(r => r.json())
-        .then(sheet => {
+      sheet.values.slice(1).forEach(row => {
 
-            if (!sheet.values || sheet.values.length < 2) {
-    container.innerHTML =
-        `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
-    restoreScroll();
-    return;
-}
+        const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
 
+        const rowDate = safe[0];
+        const cinema  = safe[1];
+        const notes   = safe[8];
 
-            const data = {};
-
-            sheet.values.slice(1).forEach(row => {
-
-                const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
-
-                const rowDate = safe[0];
-                const cinema  = safe[1];
-                const notes   = safe[8];
-
-                if (rowDate !== formatted || !cinema) return;
-                if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
+        if (rowDate !== formatted || !cinema) return;
+        if (LOCKED_CINEMA && cinema !== LOCKED_CINEMA) return;
 
                 // -------- robust notes tag match --------
                 if (LOCKED_NOTES_TAG) {
@@ -421,7 +416,7 @@ if (FILM_ONLY && !isFilm) return;
 
 requestAnimationFrame(() => {
   window.scrollTo(0, scrollY);
-  updateCalendar();
+  
 });
 
 
@@ -462,8 +457,10 @@ document.getElementById("prev-btn").onclick = () => {
   );
 
   resetFilmFilter();
+  updateCalendar();          // ✅ ADD THIS
   loadListingsFor(currentDate);
 };
+
 
 
 document.getElementById("next-btn").onclick = () => {
@@ -476,8 +473,10 @@ document.getElementById("next-btn").onclick = () => {
   );
 
   resetFilmFilter();
+updateCalendar();            // ✅ ADD THIS
 loadListingsFor(currentDate);
     };
+
 
 
 
@@ -499,8 +498,11 @@ document.getElementById("date-picker").onchange = e => {
   currentDate = atLocalMidnight(new Date(e.target.value + "T00:00:00"));
 
   resetFilmFilter();
-  loadListingsFor(currentDate);
-};
+updateCalendar();            // ✅ ADD THIS
+loadListingsFor(currentDate);
+
+    };
+
 
 
 
@@ -522,12 +524,15 @@ fetch(initURL)
     currentDate = atLocalMidnight(new Date());
 
     // FESTIVAL / LOCKED PAGES ONLY
-    if (window.LOCKED_NOTES_TAG && sheet.values && sheet.values.length > 1) {
-      const first = getEarliestMatchingDate(sheet.values);
-      if (first) {
-        currentDate = first;
-      }
-    }
+if (window.LOCKED_NOTES_TAG && sheet.values && sheet.values.length > 1) {
+  const first = getEarliestMatchingDate(sheet.values);
+  const today = atLocalMidnight(new Date());
+
+  if (first) {
+    currentDate = first > today ? first : today;
+  }
+}
+
 
         loadListingsFor(currentDate);
     
