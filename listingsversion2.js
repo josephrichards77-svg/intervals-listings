@@ -87,7 +87,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // -------------------------------------------------------
-  // LOAD LISTINGS (FLATPICKR-INDEPENDENT)
+  // LOAD LISTINGS (CORE)
   // -------------------------------------------------------
   function loadListingsFor(date) {
     container.innerHTML = "";
@@ -187,7 +187,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // -------------------------------------------------------
-  // FLATPICKR (ROBUST: GLOBAL OR MODULE)
+  // FLATPICKR (WORDPRESS-SAFE SELECTION)
   // -------------------------------------------------------
   try {
     const fp =
@@ -198,16 +198,21 @@ document.addEventListener("DOMContentLoaded", function () {
           : null;
 
     if (fp && document.getElementById("date-picker")) {
+
+      const handleDate = (dates) => {
+        if (!dates || !dates.length) return;
+        currentDate = atLocalMidnight(dates[0]);
+        resetFilmFilter();
+        updateCalendar();
+        loadListingsFor(currentDate);
+      };
+
       datePicker = fp("#date-picker", {
         dateFormat: "Y-m-d",
         clickOpens: false,
-        onChange: (dates) => {
-          if (!dates || !dates.length) return;
-          currentDate = atLocalMidnight(dates[0]);
-          resetFilmFilter();
-          updateCalendar();
-          loadListingsFor(currentDate);
-        }
+        onChange: handleDate,
+        onValueUpdate: handleDate,
+        onClose: handleDate
       });
 
       calendarDate && calendarDate.addEventListener("click", () => {
