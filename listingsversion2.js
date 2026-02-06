@@ -54,6 +54,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   let currentDate = null;
   let FILM_ONLY = false;
+  let datePicker = null;
 
   const filmFilter = document.getElementById("filter-film");
 
@@ -103,7 +104,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const raw = fmt.trim();
     if (raw === "") return "DCP";
-
     if (/^(—|none|hide|x)$/i.test(raw)) return "";
 
     const f = raw.toUpperCase().replace(/\s+/g, "");
@@ -220,19 +220,6 @@ document.addEventListener("DOMContentLoaded", function () {
                       <a href="${s.link || "#"}">${s.title}</a>
                       ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
                       ${s.details ? `<div class="details">${s.details}</div>` : ""}
-                      ${s.programmeFilms.length ? `
-                        <ul class="programme-films">
-                          ${s.programmeFilms.map(f => `
-                            <li>
-                              <div class="pf-title">${f.title}</div>
-                              ${[f.director,f.year,f.runtime,f.format].some(Boolean)
-                                ? `<div class="pf-meta">${[f.director,f.year,f.runtime,f.format].filter(Boolean).join(", ")}</div>`
-                                : ""
-                              }
-                            </li>
-                          `).join("")}
-                        </ul>` : ""
-                      }
                       <div class="time">${s.times.join(", ")}</div>
                     </div>
                   `).join("")}
@@ -256,13 +243,39 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("prev-btn").onclick = () => {
     currentDate.setDate(currentDate.getDate() - 1);
-    resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+    datePicker.setDate(currentDate, false);
+    resetFilmFilter();
+    updateCalendar();
+    loadListingsFor(currentDate);
   };
 
   document.getElementById("next-btn").onclick = () => {
     currentDate.setDate(currentDate.getDate() + 1);
-    resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+    datePicker.setDate(currentDate, false);
+    resetFilmFilter();
+    updateCalendar();
+    loadListingsFor(currentDate);
   };
+
+  // -------------------------------------------------------
+  // INIT FLATPICKR
+  // -------------------------------------------------------
+  datePicker = flatpickr("#date-picker", {
+    dateFormat: "Y-m-d",
+    defaultDate: new Date(),
+    clickOpens: false,
+    onChange: (dates) => {
+      if (!dates.length) return;
+      currentDate = atLocalMidnight(dates[0]);
+      resetFilmFilter();
+      updateCalendar();
+      loadListingsFor(currentDate);
+    }
+  });
+
+  document.getElementById("calendar-date")?.addEventListener("click", () => {
+    datePicker.open();
+  });
 
   // -------------------------------------------------------
   // INIT
@@ -276,6 +289,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (first && first > currentDate) currentDate = first;
       }
       updateCalendar();
+      datePicker.setDate(currentDate, false);
       loadListingsFor(currentDate);
     });
 
