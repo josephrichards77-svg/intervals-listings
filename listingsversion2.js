@@ -101,17 +101,15 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   function normaliseFormat(fmt) {
     if (fmt === undefined || fmt === null) return "DCP";
-
     const raw = fmt.trim();
     if (raw === "") return "DCP";
     if (/^(—|none|hide|x)$/i.test(raw)) return "";
 
     const f = raw.toUpperCase().replace(/\s+/g, "");
-
-    if (["DIGITAL", "DIG", "HD", "DCP", "4K", "4KRESTORATION"].includes(f)) return "DCP";
-    if (["35", "35MM"].includes(f)) return "35mm";
-    if (["70", "70MM"].includes(f)) return "70mm";
-    if (["16", "16MM"].includes(f)) return "16mm";
+    if (["DIGITAL","DIG","HD","DCP","4K","4KRESTORATION"].includes(f)) return "DCP";
+    if (["35","35MM"].includes(f)) return "35mm";
+    if (["70","70MM"].includes(f)) return "70mm";
+    if (["16","16MM"].includes(f)) return "16mm";
 
     return raw;
   }
@@ -160,21 +158,12 @@ document.addEventListener("DOMContentLoaded", function () {
           if (LOCKED_CINEMA && safe[1] !== LOCKED_CINEMA) return;
 
           const format = normaliseFormat(safe[5]);
-          const isFilm = /(16mm|35mm|70mm)/i.test(format);
-          if (FILM_ONLY && !isFilm) return;
+          if (FILM_ONLY && !/(16mm|35mm|70mm)/i.test(format)) return;
 
           const rawTitle = safe[2].trim();
           const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
-
           const title = m ? m[2] : rawTitle;
           const link  = m ? m[1] : "";
-
-          const programmeFilms = safe[9]
-            ? safe[9].split("||").map(p => {
-                const [t,d,y,r,f] = p.split("|").map(x => x.trim());
-                return { title:t, director:d, year:y, runtime:r, format:f };
-              }).filter(p => p.title)
-            : [];
 
           if (!data[safe[1]]) data[safe[1]] = [];
 
@@ -189,7 +178,6 @@ document.addEventListener("DOMContentLoaded", function () {
               link,
               notes: safe[8],
               screeningNotes: cleanedScreeningNotes,
-              programmeFilms,
               details: [
                 safe[3],
                 safe[7],
@@ -243,7 +231,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("prev-btn").onclick = () => {
     currentDate.setDate(currentDate.getDate() - 1);
-    datePicker.setDate(currentDate, false);
+    if (datePicker) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
@@ -251,31 +239,33 @@ document.addEventListener("DOMContentLoaded", function () {
 
   document.getElementById("next-btn").onclick = () => {
     currentDate.setDate(currentDate.getDate() + 1);
-    datePicker.setDate(currentDate, false);
+    if (datePicker) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
   };
 
   // -------------------------------------------------------
-  // INIT FLATPICKR
+  // INIT FLATPICKR (OPTIONAL, SAFE)
   // -------------------------------------------------------
-  datePicker = flatpickr("#date-picker", {
-    dateFormat: "Y-m-d",
-    defaultDate: new Date(),
-    clickOpens: false,
-    onChange: (dates) => {
-      if (!dates.length) return;
-      currentDate = atLocalMidnight(dates[0]);
-      resetFilmFilter();
-      updateCalendar();
-      loadListingsFor(currentDate);
-    }
-  });
+  if (typeof flatpickr !== "undefined" && document.getElementById("date-picker")) {
+    datePicker = flatpickr("#date-picker", {
+      dateFormat: "Y-m-d",
+      defaultDate: new Date(),
+      clickOpens: false,
+      onChange: (dates) => {
+        if (!dates.length) return;
+        currentDate = atLocalMidnight(dates[0]);
+        resetFilmFilter();
+        updateCalendar();
+        loadListingsFor(currentDate);
+      }
+    });
 
-  document.getElementById("calendar-date")?.addEventListener("click", () => {
-    datePicker.open();
-  });
+    document.getElementById("calendar-date")?.addEventListener("click", () => {
+      datePicker.open();
+    });
+  }
 
   // -------------------------------------------------------
   // INIT
@@ -289,7 +279,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (first && first > currentDate) currentDate = first;
       }
       updateCalendar();
-      datePicker.setDate(currentDate, false);
+      if (datePicker) datePicker.setDate(currentDate, false);
       loadListingsFor(currentDate);
     });
 
