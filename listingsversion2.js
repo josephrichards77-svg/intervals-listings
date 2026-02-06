@@ -14,6 +14,14 @@ document.addEventListener("DOMContentLoaded", function () {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
+  function formatYMD(date) {
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0")
+    ].join("-");
+  }
+
   function getOrdinal(n) {
     if (n > 3 && n < 21) return "th";
     return ["th","st","nd","rd"][Math.min(n % 10, 4)] || "th";
@@ -87,11 +95,11 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // -------------------------------------------------------
-  // LOAD LISTINGS (CORE)
+  // LOAD LISTINGS (LOCAL DATE SAFE)
   // -------------------------------------------------------
   function loadListingsFor(date) {
     container.innerHTML = "";
-    const formatted = date.toISOString().slice(0, 10);
+    const formatted = formatYMD(date);
 
     fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
       .then(r => r.json())
@@ -171,7 +179,11 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   prevBtn && (prevBtn.onclick = () => {
-    currentDate.setDate(currentDate.getDate() - 1);
+    currentDate = atLocalMidnight(new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate() - 1
+    ));
     if (datePicker?.setDate) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
@@ -179,7 +191,11 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   nextBtn && (nextBtn.onclick = () => {
-    currentDate.setDate(currentDate.getDate() + 1);
+    currentDate = atLocalMidnight(new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate() + 1
+    ));
     if (datePicker?.setDate) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
@@ -187,7 +203,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // -------------------------------------------------------
-  // FLATPICKR (WORDPRESS-SAFE SELECTION)
+  // FLATPICKR (WP-SAFE)
   // -------------------------------------------------------
   try {
     const fp =
@@ -198,7 +214,6 @@ document.addEventListener("DOMContentLoaded", function () {
           : null;
 
     if (fp && document.getElementById("date-picker")) {
-
       const handleDate = (dates) => {
         if (!dates || !dates.length) return;
         currentDate = atLocalMidnight(dates[0]);
@@ -221,7 +236,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   } catch (e) {
     console.warn("Flatpickr disabled safely:", e);
-    datePicker = null;
   }
 
   // -------------------------------------------------------
