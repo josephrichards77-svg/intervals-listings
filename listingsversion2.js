@@ -1,27 +1,83 @@
 document.addEventListener("DOMContentLoaded", function () {
 
   // -------------------------------------------------------
-  // SCROLL AUTHORITY
+  // SCROLL AUTHORITY — PREVENT BROWSER JUMPING
   // -------------------------------------------------------
-  if ("scrollRestoration" in history) {
-    history.scrollRestoration = "manual";
+  if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual';
   }
 
   // -------------------------------------------------------
-  // DATE HELPERS
+  // DATE SAFETY — FORCE LOCAL MIDNIGHT
   // -------------------------------------------------------
   function atLocalMidnight(d) {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
-  function formatYMD(date) {
-    return [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, "0"),
-      String(date.getDate()).padStart(2, "0")
-    ].join("-");
+  function getEarliestMatchingDate(values) {
+    return values
+      .slice(1)
+      .map(row => {
+        const date  = row[0];
+        const notes = row[8] || "";
+        if (!date) return null;
+
+        if (window.LOCKED_NOTES_TAG) {
+          const notesNorm = String(notes)
+            .toLowerCase()
+            .replace(/\u00a0/g, " ")
+            .replace(/[^a-z0-9]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          const tagNorm = String(window.LOCKED_NOTES_TAG)
+            .toLowerCase()
+            .replace(/\u00a0/g, " ")
+            .replace(/[^a-z0-9]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          const notesTokens = new Set(notesNorm.split(" "));
+          const tagTokens = tagNorm.split(" ").filter(Boolean);
+
+          if (!tagTokens.every(t => notesTokens.has(t))) return null;
+        }
+
+        return atLocalMidnight(new Date(date));
+      })
+      .filter(Boolean)
+      .sort((a, b) => a - b)[0] || null;
   }
 
+  // -------------------------------------------------------
+  // STATE
+  // -------------------------------------------------------
+  let currentDate = null;
+  let FILM_ONLY = false;
+
+  const filmFilter = document.getElementById("filter-film");
+
+  function resetFilmFilter() {
+    FILM_ONLY = false;
+    filmFilter?.classList.remove("active");
+  }
+
+  // -------------------------------------------------------
+  // LOCKED FILTERS
+  // -------------------------------------------------------
+  const LOCKED_CINEMA =
+    typeof window.LOCKED_CINEMA !== "undefined"
+      ? window.LOCKED_CINEMA
+      : null;
+
+  const LOCKED_NOTES_TAG =
+    typeof window.LOCKED_NOTES_TAG !== "undefined"
+      ? window.LOCKED_NOTES_TAG
+      : null;
+
+  // -------------------------------------------------------
+  // DATE FORMAT
+  // -------------------------------------------------------
   function getOrdinal(n) {
     if (n > 3 && n < 21) return "th";
     return ["th","st","nd","rd"][Math.min(n % 10, 4)] || "th";
@@ -32,52 +88,38 @@ document.addEventListener("DOMContentLoaded", function () {
     return `${date.toLocaleDateString("en-GB", { weekday: "long" })}, ${d}${getOrdinal(d)} ${date.toLocaleDateString("en-GB", { month: "long" })} ${date.getFullYear()}`;
   }
 
-  // -------------------------------------------------------
-  // STATE
-  // -------------------------------------------------------
-  let currentDate = atLocalMidnight(new Date());
-  let FILM_ONLY = false;
-  let datePicker = null;
-
-  const container    = document.getElementById("cinema-listings");
-  const filmFilter   = document.getElementById("filter-film");
-  const calendarDate = document.getElementById("calendar-date");
-  const prevBtn      = document.getElementById("prev-btn");
-  const nextBtn      = document.getElementById("next-btn");
-
-  if (!container) return;
-
   function updateCalendar() {
-    if (calendarDate) {
-      calendarDate.textContent = formatFullDate(currentDate);
+    if (currentDate) {
+      document.getElementById("calendar-date").textContent =
+        formatFullDate(currentDate);
     }
-  }
-
-  function resetFilmFilter() {
-    FILM_ONLY = false;
-    filmFilter?.classList.remove("active");
   }
 
   // -------------------------------------------------------
   // NORMALISERS
   // -------------------------------------------------------
   function normaliseFormat(fmt) {
-    if (!fmt) return "DCP";
-    const raw = String(fmt).trim();
-    if (!raw) return "DCP";
+    if (fmt === undefined || fmt === null) return "DCP";
+
+    const raw = fmt.trim();
+    if (raw === "") return "DCP";
+
+    // explicit editorial suppression
     if (/^(—|none|hide|x)$/i.test(raw)) return "";
 
     const f = raw.toUpperCase().replace(/\s+/g, "");
-    if (["DIGITAL","DIG","HD","DCP","4K","4KRESTORATION"].includes(f)) return "DCP";
-    if (["35","35MM"].includes(f)) return "35mm";
-    if (["70","70MM"].includes(f)) return "70mm";
-    if (["16","16MM"].includes(f)) return "16mm";
+
+    if (["DIGITAL", "DIG", "HD", "DCP", "4K", "4KRESTORATION"].includes(f)) return "DCP";
+    if (["35", "35MM"].includes(f)) return "35mm";
+    if (["70", "70MM"].includes(f)) return "70mm";
+    if (["16", "16MM"].includes(f)) return "16mm";
+
     return raw;
   }
 
   function normaliseTime(t) {
     if (!t) return "";
-    const clean = String(t).replace(/\./g, "").trim().toUpperCase();
+    const clean = t.replace(/\./g, "").trim().toUpperCase();
     if (/^\d{2}:\d{2}$/.test(clean)) return clean;
 
     const m = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
@@ -91,85 +133,69 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function normaliseCinemaName(name) {
-    return String(name).replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
+    return name.replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
   }
 
   // -------------------------------------------------------
-  // ROW PARSER (THIS IS THE FIX)
-  // -------------------------------------------------------
-  function parseSheetRow(row) {
-    // If the row is already split into columns, just normalise.
-    const isSingleCell = Array.isArray(row) && row.length === 1 && typeof row[0] === "string";
-
-    let cols;
-    if (isSingleCell && row[0].includes(";")) {
-      // Master sheet stores semicolon-delimited rows in one cell (Column A)
-      cols = row[0].split(";");
-
-      // if the source line ends with a trailing semicolon, split() gives an extra empty string
-      // leaving it is fine; we pad anyway
-    } else {
-      cols = row;
-    }
-
-    // Canon expectation (at least first 9 exist in your example):
-    // 0 date, 1 cinema, 2 title, 3 director, 4 runtime, 5 format, 6 time, 7 year, 8 notes, 9 shorts_titles, 10 screening_notes
-    const safe = Array.from({ length: 11 }, (_, i) => (cols && cols[i] != null ? String(cols[i]) : ""));
-
-    // Trim everything; keep HTML in title intact
-    for (let i = 0; i < safe.length; i++) safe[i] = safe[i].replace(/\u00a0/g, " ").trim();
-
-    return safe;
-  }
-
-  // -------------------------------------------------------
-  // LOAD LISTINGS (LOCAL DATE SAFE + SEMICOLON ROW SAFE)
+  // LOAD LISTINGS
   // -------------------------------------------------------
   function loadListingsFor(date) {
+    currentDate = date;
+    const scrollY = window.scrollY;
+
+    const container = document.getElementById("cinema-listings");
     container.innerHTML = "";
-    const formatted = formatYMD(date);
+
+    const formatted = date.toISOString().slice(0, 10);
 
     fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
       .then(r => r.json())
       .then(sheet => {
-        if (!sheet.values || sheet.values.length < 1) return;
+        if (!sheet.values || sheet.values.length < 2) return;
 
         const data = {};
 
-        sheet.values.forEach(row => {
-          const safe = parseSheetRow(row);
-
-          // date match
+        sheet.values.slice(1).forEach(row => {
+          const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
           if (safe[0] !== formatted) return;
+          if (LOCKED_CINEMA && safe[1] !== LOCKED_CINEMA) return;
 
           const format = normaliseFormat(safe[5]);
-          if (FILM_ONLY && !/(16mm|35mm|70mm)/i.test(format)) return;
+          const isFilm = /(16mm|35mm|70mm)/i.test(format);
+          if (FILM_ONLY && !isFilm) return;
 
           const rawTitle = safe[2].trim();
           const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
+
           const title = m ? m[2] : rawTitle;
           const link  = m ? m[1] : "";
 
-          const cinema = safe[1] || "Unknown venue";
+          const programmeFilms = safe[9]
+            ? safe[9].split("||").map(p => {
+                const [t,d,y,r,f] = p.split("|").map(x => x.trim());
+                return { title:t, director:d, year:y, runtime:r, format:f };
+              }).filter(p => p.title)
+            : [];
 
-          if (!data[cinema]) data[cinema] = [];
+          if (!data[safe[1]]) data[safe[1]] = [];
 
-          let film = data[cinema].find(f => f.title === title);
+          let film = data[safe[1]].find(f => f.title === title);
           if (!film) {
             film = {
               title,
               link,
               notes: safe[8],
-              screeningNotes: String(safe[10] || "").replace(/\u00a0/g, " ").trim(),
+              screeningNotes: safe[10],
+              programmeFilms,
               details: [
                 safe[3],
                 safe[7],
-                safe[4] ? `${String(safe[4]).trim()} min` : "",
+                safe[4] ? `${safe[4]} min` : "",
                 format
               ].filter(Boolean).join(", "),
               times: []
             };
-            data[cinema].push(film);
+            data[safe[1]].push(film);
           }
 
           (safe[6] || "").split(",").forEach(t => {
@@ -191,6 +217,19 @@ document.addEventListener("DOMContentLoaded", function () {
                       <a href="${s.link || "#"}">${s.title}</a>
                       ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
                       ${s.details ? `<div class="details">${s.details}</div>` : ""}
+                      ${s.programmeFilms.length ? `
+                        <ul class="programme-films">
+                          ${s.programmeFilms.map(f => `
+                            <li>
+                              <div class="pf-title">${f.title}</div>
+                              ${[f.director,f.year,f.runtime,f.format].some(Boolean)
+                                ? `<div class="pf-meta">${[f.director,f.year,f.runtime,f.format].filter(Boolean).join(", ")}</div>`
+                                : ""
+                              }
+                            </li>
+                          `).join("")}
+                        </ul>` : ""
+                      }
                       <div class="time">${s.times.join(", ")}</div>
                     </div>
                   `).join("")}
@@ -198,6 +237,8 @@ document.addEventListener("DOMContentLoaded", function () {
               </div>
             `;
           });
+
+        window.scrollTo(0, scrollY);
       });
   }
 
@@ -210,71 +251,29 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
   });
 
-  prevBtn && (prevBtn.onclick = () => {
-    currentDate = atLocalMidnight(new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      currentDate.getDate() - 1
-    ));
-    if (datePicker?.setDate) datePicker.setDate(currentDate, false);
-    resetFilmFilter();
-    updateCalendar();
-    loadListingsFor(currentDate);
-  });
+  document.getElementById("prev-btn").onclick = () => {
+    currentDate.setDate(currentDate.getDate() - 1);
+    resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+  };
 
-  nextBtn && (nextBtn.onclick = () => {
-    currentDate = atLocalMidnight(new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      currentDate.getDate() + 1
-    ));
-    if (datePicker?.setDate) datePicker.setDate(currentDate, false);
-    resetFilmFilter();
-    updateCalendar();
-    loadListingsFor(currentDate);
-  });
-
-  // -------------------------------------------------------
-  // FLATPICKR (WP-SAFE SELECTION)
-  // -------------------------------------------------------
-  try {
-    const fp =
-      typeof window.flatpickr === "function"
-        ? window.flatpickr
-        : window.flatpickr && typeof window.flatpickr.default === "function"
-          ? window.flatpickr.default
-          : null;
-
-    if (fp && document.getElementById("date-picker")) {
-
-      const handleDate = (dates) => {
-        if (!dates || !dates.length) return;
-        currentDate = atLocalMidnight(dates[0]);
-        resetFilmFilter();
-        updateCalendar();
-        loadListingsFor(currentDate);
-      };
-
-      datePicker = fp("#date-picker", {
-        dateFormat: "Y-m-d",
-        clickOpens: false,
-        onChange: handleDate,
-        onValueUpdate: handleDate,
-        onClose: handleDate
-      });
-
-      calendarDate && calendarDate.addEventListener("click", () => {
-        datePicker.open();
-      });
-    }
-  } catch (e) {
-    console.warn("Flatpickr disabled safely:", e);
-  }
+  document.getElementById("next-btn").onclick = () => {
+    currentDate.setDate(currentDate.getDate() + 1);
+    resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+  };
 
   // -------------------------------------------------------
   // INIT
   // -------------------------------------------------------
-  updateCalendar();
-  loadListingsFor(currentDate);
+  fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
+    .then(r => r.json())
+    .then(sheet => {
+      currentDate = atLocalMidnight(new Date());
+      if (LOCKED_NOTES_TAG) {
+        const first = getEarliestMatchingDate(sheet.values);
+        if (first && first > currentDate) currentDate = first;
+      }
+      updateCalendar();
+      loadListingsFor(currentDate);
+    });
 
 });
