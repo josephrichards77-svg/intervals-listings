@@ -31,13 +31,13 @@ document.addEventListener("DOMContentLoaded", function () {
   let FILM_ONLY = false;
   let datePicker = null;
 
-  const container = document.getElementById("cinema-listings");
-  const filmFilter = document.getElementById("filter-film");
+  const container    = document.getElementById("cinema-listings");
+  const filmFilter   = document.getElementById("filter-film");
   const calendarDate = document.getElementById("calendar-date");
-  const prevBtn = document.getElementById("prev-btn");
-  const nextBtn = document.getElementById("next-btn");
+  const prevBtn      = document.getElementById("prev-btn");
+  const nextBtn      = document.getElementById("next-btn");
 
-  if (!container) return; // nothing to render into, bail safely
+  if (!container) return;
 
   function updateCalendar() {
     if (calendarDate) {
@@ -87,7 +87,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // -------------------------------------------------------
-  // LOAD LISTINGS (CORE — NEVER TOUCHES FLATPICKR)
+  // LOAD LISTINGS (FLATPICKR-INDEPENDENT)
   // -------------------------------------------------------
   function loadListingsFor(date) {
     container.innerHTML = "";
@@ -172,9 +172,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   prevBtn && (prevBtn.onclick = () => {
     currentDate.setDate(currentDate.getDate() - 1);
-    if (datePicker && typeof datePicker.setDate === "function") {
-      datePicker.setDate(currentDate, false);
-    }
+    if (datePicker?.setDate) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
@@ -182,20 +180,25 @@ document.addEventListener("DOMContentLoaded", function () {
 
   nextBtn && (nextBtn.onclick = () => {
     currentDate.setDate(currentDate.getDate() + 1);
-    if (datePicker && typeof datePicker.setDate === "function") {
-      datePicker.setDate(currentDate, false);
-    }
+    if (datePicker?.setDate) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
   });
 
   // -------------------------------------------------------
-  // FLATPICKR (HARD GUARDED, NEVER REQUIRED)
+  // FLATPICKR (ROBUST: GLOBAL OR MODULE)
   // -------------------------------------------------------
   try {
-    if (typeof window.flatpickr === "function" && document.getElementById("date-picker")) {
-      datePicker = window.flatpickr("#date-picker", {
+    const fp =
+      typeof window.flatpickr === "function"
+        ? window.flatpickr
+        : window.flatpickr && typeof window.flatpickr.default === "function"
+          ? window.flatpickr.default
+          : null;
+
+    if (fp && document.getElementById("date-picker")) {
+      datePicker = fp("#date-picker", {
         dateFormat: "Y-m-d",
         clickOpens: false,
         onChange: (dates) => {
@@ -212,7 +215,7 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     }
   } catch (e) {
-    console.warn("Flatpickr disabled:", e);
+    console.warn("Flatpickr disabled safely:", e);
     datePicker = null;
   }
 
