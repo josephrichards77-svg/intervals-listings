@@ -3,8 +3,8 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   // SCROLL AUTHORITY
   // -------------------------------------------------------
-  if ('scrollRestoration' in history) {
-    history.scrollRestoration = 'manual';
+  if ("scrollRestoration" in history) {
+    history.scrollRestoration = "manual";
   }
 
   // -------------------------------------------------------
@@ -27,24 +27,27 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   // STATE
   // -------------------------------------------------------
-  let currentDate = null;
+  let currentDate = atLocalMidnight(new Date());
   let FILM_ONLY = false;
   let datePicker = null;
 
+  const container = document.getElementById("cinema-listings");
   const filmFilter = document.getElementById("filter-film");
   const calendarDate = document.getElementById("calendar-date");
   const prevBtn = document.getElementById("prev-btn");
   const nextBtn = document.getElementById("next-btn");
 
+  if (!container) return; // nothing to render into, bail safely
+
+  function updateCalendar() {
+    if (calendarDate) {
+      calendarDate.textContent = formatFullDate(currentDate);
+    }
+  }
+
   function resetFilmFilter() {
     FILM_ONLY = false;
     filmFilter?.classList.remove("active");
-  }
-
-  function updateCalendar() {
-    if (currentDate && calendarDate) {
-      calendarDate.textContent = formatFullDate(currentDate);
-    }
   }
 
   // -------------------------------------------------------
@@ -61,7 +64,6 @@ document.addEventListener("DOMContentLoaded", function () {
     if (["35","35MM"].includes(f)) return "35mm";
     if (["70","70MM"].includes(f)) return "70mm";
     if (["16","16MM"].includes(f)) return "16mm";
-
     return raw;
   }
 
@@ -85,14 +87,9 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // -------------------------------------------------------
-  // LOAD LISTINGS
+  // LOAD LISTINGS (CORE — NEVER TOUCHES FLATPICKR)
   // -------------------------------------------------------
   function loadListingsFor(date) {
-    currentDate = date;
-
-    const container = document.getElementById("cinema-listings");
-    if (!container) return;
-
     container.innerHTML = "";
     const formatted = date.toISOString().slice(0, 10);
 
@@ -165,7 +162,7 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // -------------------------------------------------------
-  // CONTROLS (SAFE)
+  // CONTROLS
   // -------------------------------------------------------
   filmFilter && (filmFilter.onclick = () => {
     FILM_ONLY = !FILM_ONLY;
@@ -175,7 +172,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
   prevBtn && (prevBtn.onclick = () => {
     currentDate.setDate(currentDate.getDate() - 1);
-    if (datePicker) datePicker.setDate(currentDate, false);
+    if (datePicker && typeof datePicker.setDate === "function") {
+      datePicker.setDate(currentDate, false);
+    }
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
@@ -183,39 +182,44 @@ document.addEventListener("DOMContentLoaded", function () {
 
   nextBtn && (nextBtn.onclick = () => {
     currentDate.setDate(currentDate.getDate() + 1);
-    if (datePicker) datePicker.setDate(currentDate, false);
+    if (datePicker && typeof datePicker.setDate === "function") {
+      datePicker.setDate(currentDate, false);
+    }
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
   });
 
   // -------------------------------------------------------
-  // FLATPICKR (OPTIONAL)
+  // FLATPICKR (HARD GUARDED, NEVER REQUIRED)
   // -------------------------------------------------------
-  if (typeof flatpickr !== "undefined" && document.getElementById("date-picker")) {
-    datePicker = flatpickr("#date-picker", {
-      dateFormat: "Y-m-d",
-      clickOpens: false,
-      onChange: (dates) => {
-        if (!dates.length) return;
-        currentDate = atLocalMidnight(dates[0]);
-        resetFilmFilter();
-        updateCalendar();
-        loadListingsFor(currentDate);
-      }
-    });
+  try {
+    if (typeof window.flatpickr === "function" && document.getElementById("date-picker")) {
+      datePicker = window.flatpickr("#date-picker", {
+        dateFormat: "Y-m-d",
+        clickOpens: false,
+        onChange: (dates) => {
+          if (!dates || !dates.length) return;
+          currentDate = atLocalMidnight(dates[0]);
+          resetFilmFilter();
+          updateCalendar();
+          loadListingsFor(currentDate);
+        }
+      });
 
-    calendarDate && calendarDate.addEventListener("click", () => {
-      datePicker.open();
-    });
+      calendarDate && calendarDate.addEventListener("click", () => {
+        datePicker.open();
+      });
+    }
+  } catch (e) {
+    console.warn("Flatpickr disabled:", e);
+    datePicker = null;
   }
 
   // -------------------------------------------------------
   // INIT
   // -------------------------------------------------------
-  currentDate = atLocalMidnight(new Date());
   updateCalendar();
-  if (datePicker) datePicker.setDate(currentDate, false);
   loadListingsFor(currentDate);
 
 });
