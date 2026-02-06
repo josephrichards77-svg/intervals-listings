@@ -63,7 +63,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   function normaliseFormat(fmt) {
     if (!fmt) return "DCP";
-    const raw = fmt.trim();
+    const raw = String(fmt).trim();
     if (!raw) return "DCP";
     if (/^(—|none|hide|x)$/i.test(raw)) return "";
 
@@ -77,7 +77,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function normaliseTime(t) {
     if (!t) return "";
-    const clean = t.replace(/\./g, "").trim().toUpperCase();
+    const clean = String(t).replace(/\./g, "").trim().toUpperCase();
     if (/^\d{2}:\d{2}$/.test(clean)) return clean;
 
     const m = clean.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
@@ -91,11 +91,39 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function normaliseCinemaName(name) {
-    return name.replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
+    return String(name).replace(/^(the|a|an)\s+/i, "").trim().toLowerCase();
   }
 
   // -------------------------------------------------------
-  // LOAD LISTINGS (LOCAL DATE SAFE)
+  // ROW PARSER (THIS IS THE FIX)
+  // -------------------------------------------------------
+  function parseSheetRow(row) {
+    // If the row is already split into columns, just normalise.
+    const isSingleCell = Array.isArray(row) && row.length === 1 && typeof row[0] === "string";
+
+    let cols;
+    if (isSingleCell && row[0].includes(";")) {
+      // Master sheet stores semicolon-delimited rows in one cell (Column A)
+      cols = row[0].split(";");
+
+      // if the source line ends with a trailing semicolon, split() gives an extra empty string
+      // leaving it is fine; we pad anyway
+    } else {
+      cols = row;
+    }
+
+    // Canon expectation (at least first 9 exist in your example):
+    // 0 date, 1 cinema, 2 title, 3 director, 4 runtime, 5 format, 6 time, 7 year, 8 notes, 9 shorts_titles, 10 screening_notes
+    const safe = Array.from({ length: 11 }, (_, i) => (cols && cols[i] != null ? String(cols[i]) : ""));
+
+    // Trim everything; keep HTML in title intact
+    for (let i = 0; i < safe.length; i++) safe[i] = safe[i].replace(/\u00a0/g, " ").trim();
+
+    return safe;
+  }
+
+  // -------------------------------------------------------
+  // LOAD LISTINGS (LOCAL DATE SAFE + SEMICOLON ROW SAFE)
   // -------------------------------------------------------
   function loadListingsFor(date) {
     container.innerHTML = "";
@@ -104,12 +132,14 @@ document.addEventListener("DOMContentLoaded", function () {
     fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
       .then(r => r.json())
       .then(sheet => {
-        if (!sheet.values || sheet.values.length < 2) return;
+        if (!sheet.values || sheet.values.length < 1) return;
 
         const data = {};
 
-        sheet.values.slice(1).forEach(row => {
-          const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
+        sheet.values.forEach(row => {
+          const safe = parseSheetRow(row);
+
+          // date match
           if (safe[0] !== formatted) return;
 
           const format = normaliseFormat(safe[5]);
@@ -120,24 +150,26 @@ document.addEventListener("DOMContentLoaded", function () {
           const title = m ? m[2] : rawTitle;
           const link  = m ? m[1] : "";
 
-          if (!data[safe[1]]) data[safe[1]] = [];
+          const cinema = safe[1] || "Unknown venue";
 
-          let film = data[safe[1]].find(f => f.title === title);
+          if (!data[cinema]) data[cinema] = [];
+
+          let film = data[cinema].find(f => f.title === title);
           if (!film) {
             film = {
               title,
               link,
               notes: safe[8],
-              screeningNotes: String(safe[10] || "").replace(/\u00a0/g," ").trim(),
+              screeningNotes: String(safe[10] || "").replace(/\u00a0/g, " ").trim(),
               details: [
                 safe[3],
                 safe[7],
-                safe[4] ? `${safe[4]} min` : "",
+                safe[4] ? `${String(safe[4]).trim()} min` : "",
                 format
               ].filter(Boolean).join(", "),
               times: []
             };
-            data[safe[1]].push(film);
+            data[cinema].push(film);
           }
 
           (safe[6] || "").split(",").forEach(t => {
@@ -203,7 +235,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   // -------------------------------------------------------
-  // FLATPICKR (WP-SAFE)
+  // FLATPICKR (WP-SAFE SELECTION)
   // -------------------------------------------------------
   try {
     const fp =
@@ -214,6 +246,7 @@ document.addEventListener("DOMContentLoaded", function () {
           : null;
 
     if (fp && document.getElementById("date-picker")) {
+
       const handleDate = (dates) => {
         if (!dates || !dates.length) return;
         currentDate = atLocalMidnight(dates[0]);
