@@ -1,84 +1,19 @@
 document.addEventListener("DOMContentLoaded", function () {
 
   // -------------------------------------------------------
-  // SCROLL AUTHORITY — PREVENT BROWSER JUMPING
+  // SCROLL AUTHORITY
   // -------------------------------------------------------
   if ('scrollRestoration' in history) {
     history.scrollRestoration = 'manual';
   }
 
   // -------------------------------------------------------
-  // DATE SAFETY — FORCE LOCAL MIDNIGHT
+  // DATE HELPERS
   // -------------------------------------------------------
   function atLocalMidnight(d) {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }
 
-  function getEarliestMatchingDate(values) {
-    return values
-      .slice(1)
-      .map(row => {
-        const date  = row[0];
-        const notes = row[8] || "";
-        if (!date) return null;
-
-        if (window.LOCKED_NOTES_TAG) {
-          const notesNorm = String(notes)
-            .toLowerCase()
-            .replace(/\u00a0/g, " ")
-            .replace(/[^a-z0-9]+/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-
-          const tagNorm = String(window.LOCKED_NOTES_TAG)
-            .toLowerCase()
-            .replace(/\u00a0/g, " ")
-            .replace(/[^a-z0-9]+/g, " ")
-            .replace(/\s+/g, " ")
-            .trim();
-
-          const notesTokens = new Set(notesNorm.split(" "));
-          const tagTokens = tagNorm.split(" ").filter(Boolean);
-
-          if (!tagTokens.every(t => notesTokens.has(t))) return null;
-        }
-
-        return atLocalMidnight(new Date(date));
-      })
-      .filter(Boolean)
-      .sort((a, b) => a - b)[0] || null;
-  }
-
-  // -------------------------------------------------------
-  // STATE
-  // -------------------------------------------------------
-  let currentDate = null;
-  let FILM_ONLY = false;
-  let datePicker = null;
-
-  const filmFilter = document.getElementById("filter-film");
-
-  function resetFilmFilter() {
-    FILM_ONLY = false;
-    filmFilter?.classList.remove("active");
-  }
-
-  // -------------------------------------------------------
-  // LOCKED FILTERS
-  // -------------------------------------------------------
-  const LOCKED_CINEMA =
-    typeof window.LOCKED_CINEMA !== "undefined"
-      ? window.LOCKED_CINEMA
-      : null;
-
-  const LOCKED_NOTES_TAG =
-    typeof window.LOCKED_NOTES_TAG !== "undefined"
-      ? window.LOCKED_NOTES_TAG
-      : null;
-
-  // -------------------------------------------------------
-  // DATE FORMAT
-  // -------------------------------------------------------
   function getOrdinal(n) {
     if (n > 3 && n < 21) return "th";
     return ["th","st","nd","rd"][Math.min(n % 10, 4)] || "th";
@@ -89,10 +24,26 @@ document.addEventListener("DOMContentLoaded", function () {
     return `${date.toLocaleDateString("en-GB", { weekday: "long" })}, ${d}${getOrdinal(d)} ${date.toLocaleDateString("en-GB", { month: "long" })} ${date.getFullYear()}`;
   }
 
+  // -------------------------------------------------------
+  // STATE
+  // -------------------------------------------------------
+  let currentDate = null;
+  let FILM_ONLY = false;
+  let datePicker = null;
+
+  const filmFilter = document.getElementById("filter-film");
+  const calendarDate = document.getElementById("calendar-date");
+  const prevBtn = document.getElementById("prev-btn");
+  const nextBtn = document.getElementById("next-btn");
+
+  function resetFilmFilter() {
+    FILM_ONLY = false;
+    filmFilter?.classList.remove("active");
+  }
+
   function updateCalendar() {
-    if (currentDate) {
-      document.getElementById("calendar-date").textContent =
-        formatFullDate(currentDate);
+    if (currentDate && calendarDate) {
+      calendarDate.textContent = formatFullDate(currentDate);
     }
   }
 
@@ -100,9 +51,9 @@ document.addEventListener("DOMContentLoaded", function () {
   // NORMALISERS
   // -------------------------------------------------------
   function normaliseFormat(fmt) {
-    if (fmt === undefined || fmt === null) return "DCP";
+    if (!fmt) return "DCP";
     const raw = fmt.trim();
-    if (raw === "") return "DCP";
+    if (!raw) return "DCP";
     if (/^(—|none|hide|x)$/i.test(raw)) return "";
 
     const f = raw.toUpperCase().replace(/\s+/g, "");
@@ -138,11 +89,11 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   function loadListingsFor(date) {
     currentDate = date;
-    const scrollY = window.scrollY;
 
     const container = document.getElementById("cinema-listings");
-    container.innerHTML = "";
+    if (!container) return;
 
+    container.innerHTML = "";
     const formatted = date.toISOString().slice(0, 10);
 
     fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
@@ -155,7 +106,6 @@ document.addEventListener("DOMContentLoaded", function () {
         sheet.values.slice(1).forEach(row => {
           const safe = Array.from({ length: 11 }, (_, i) => row[i] || "");
           if (safe[0] !== formatted) return;
-          if (LOCKED_CINEMA && safe[1] !== LOCKED_CINEMA) return;
 
           const format = normaliseFormat(safe[5]);
           if (FILM_ONLY && !/(16mm|35mm|70mm)/i.test(format)) return;
@@ -167,17 +117,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
           if (!data[safe[1]]) data[safe[1]] = [];
 
-          const cleanedScreeningNotes = String(safe[10] || "")
-            .replace(/\u00a0/g, " ")
-            .trim();
-
           let film = data[safe[1]].find(f => f.title === title);
           if (!film) {
             film = {
               title,
               link,
               notes: safe[8],
-              screeningNotes: cleanedScreeningNotes,
+              screeningNotes: String(safe[10] || "").replace(/\u00a0/g," ").trim(),
               details: [
                 safe[3],
                 safe[7],
@@ -215,13 +161,11 @@ document.addEventListener("DOMContentLoaded", function () {
               </div>
             `;
           });
-
-        window.scrollTo(0, scrollY);
       });
   }
 
   // -------------------------------------------------------
-  // CONTROLS
+  // CONTROLS (SAFE)
   // -------------------------------------------------------
   filmFilter && (filmFilter.onclick = () => {
     FILM_ONLY = !FILM_ONLY;
@@ -229,29 +173,28 @@ document.addEventListener("DOMContentLoaded", function () {
     loadListingsFor(currentDate);
   });
 
-  document.getElementById("prev-btn").onclick = () => {
+  prevBtn && (prevBtn.onclick = () => {
     currentDate.setDate(currentDate.getDate() - 1);
     if (datePicker) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
-  };
+  });
 
-  document.getElementById("next-btn").onclick = () => {
+  nextBtn && (nextBtn.onclick = () => {
     currentDate.setDate(currentDate.getDate() + 1);
     if (datePicker) datePicker.setDate(currentDate, false);
     resetFilmFilter();
     updateCalendar();
     loadListingsFor(currentDate);
-  };
+  });
 
   // -------------------------------------------------------
-  // INIT FLATPICKR (OPTIONAL, SAFE)
+  // FLATPICKR (OPTIONAL)
   // -------------------------------------------------------
   if (typeof flatpickr !== "undefined" && document.getElementById("date-picker")) {
     datePicker = flatpickr("#date-picker", {
       dateFormat: "Y-m-d",
-      defaultDate: new Date(),
       clickOpens: false,
       onChange: (dates) => {
         if (!dates.length) return;
@@ -262,7 +205,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
 
-    document.getElementById("calendar-date")?.addEventListener("click", () => {
+    calendarDate && calendarDate.addEventListener("click", () => {
       datePicker.open();
     });
   }
@@ -270,17 +213,9 @@ document.addEventListener("DOMContentLoaded", function () {
   // -------------------------------------------------------
   // INIT
   // -------------------------------------------------------
-  fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
-    .then(r => r.json())
-    .then(sheet => {
-      currentDate = atLocalMidnight(new Date());
-      if (LOCKED_NOTES_TAG) {
-        const first = getEarliestMatchingDate(sheet.values);
-        if (first && first > currentDate) currentDate = first;
-      }
-      updateCalendar();
-      if (datePicker) datePicker.setDate(currentDate, false);
-      loadListingsFor(currentDate);
-    });
+  currentDate = atLocalMidnight(new Date());
+  updateCalendar();
+  if (datePicker) datePicker.setDate(currentDate, false);
+  loadListingsFor(currentDate);
 
 });
