@@ -104,7 +104,6 @@ document.addEventListener("DOMContentLoaded", function () {
     const raw = fmt.trim();
     if (raw === "") return "DCP";
 
-    // explicit editorial suppression
     if (/^(—|none|hide|x)$/i.test(raw)) return "";
 
     const f = raw.toUpperCase().replace(/\s+/g, "");
@@ -179,13 +178,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
           if (!data[safe[1]]) data[safe[1]] = [];
 
+          const cleanedScreeningNotes = String(safe[10] || "")
+            .replace(/\u00a0/g, " ")
+            .trim();
+
           let film = data[safe[1]].find(f => f.title === title);
           if (!film) {
             film = {
               title,
               link,
               notes: safe[8],
-              screeningNotes: safe[10],
+              screeningNotes: cleanedScreeningNotes,
               programmeFilms,
               details: [
                 safe[3],
