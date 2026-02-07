@@ -72,6 +72,13 @@ function normaliseCinemaName(name) {
   return name.replace(/^(the|a|an)\s+/i,"").trim().toLowerCase();
 }
 
+/* === ADDITION: TIME SORTING HELPER === */
+function timeToMinutes(t) {
+  if (!t) return Infinity;
+  const [h,m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
 /* =======================================================
    LOAD LISTINGS
 ======================================================= */
@@ -153,6 +160,14 @@ function loadListingsFor(date) {
           const nt = normaliseTime(t.trim());
           if (nt && !film.times.includes(nt)) film.times.push(nt);
         });
+
+        /* === ADDITION: SORT TIMES WITHIN FILM === */
+        film.times.sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
+      });
+
+      /* === ADDITION: SORT FILMS BY EARLIEST TIME === */
+      Object.values(data).forEach(films=>{
+        films.sort((a,b)=>timeToMinutes(a.times[0]) - timeToMinutes(b.times[0]));
       });
 
       if (!Object.keys(data).length) {
