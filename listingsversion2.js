@@ -72,23 +72,37 @@ function normaliseCinemaName(name) {
   return name.replace(/^(the|a|an)\s+/i,"").trim().toLowerCase();
 }
 
-/* === ADDITION: TIME SORTING HELPER === */
 function timeToMinutes(t) {
   if (!t) return Infinity;
   const [h,m] = t.split(":").map(Number);
   return h * 60 + m;
 }
 
-/* === ADDITION: CLEAN METADATA HELPERS === */
+/* =======================================================
+   METADATA CLEANERS
+======================================================= */
+
 function cleanValue(v) {
   return String(v || "").trim();
 }
 
+function cleanRuntime(v) {
+  return String(v || "")
+    .trim()
+    .replace(/\bminutes?\b/gi,"")
+    .replace(/\bmins?\b/gi,"")
+    .replace(/\bmin\b/gi,"")
+    .trim();
+}
+
 function buildDetails(director, year, runtime, format) {
+
+  const rt = cleanRuntime(runtime);
+
   const parts = [
     cleanValue(director),
     cleanValue(year),
-    cleanValue(runtime) ? `${cleanValue(runtime)} min` : "",
+    rt ? `${rt} min` : "",
     cleanValue(format)
   ].filter(Boolean);
 
@@ -96,10 +110,13 @@ function buildDetails(director, year, runtime, format) {
 }
 
 function buildProgrammeMeta(director, year, runtime, format) {
+
+  const rt = cleanRuntime(runtime);
+
   const parts = [
     cleanValue(director),
     cleanValue(year),
-    cleanValue(runtime) ? `${cleanValue(runtime)} min` : "",
+    rt ? `${rt} min` : "",
     cleanValue(format)
   ].filter(Boolean);
 
@@ -126,7 +143,8 @@ function loadListingsFor(date) {
   fetch("https://sheets.googleapis.com/v4/spreadsheets/1JgcHZ2D-YOfqAgnOJmFhv7U5lgFrSYRVFfwdn3BPczY/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
     .then(r=>r.json())
     .then(sheet=>{
-      if (!sheet.values || sheet.values.length<2) {
+
+      if (!sheet.values || sheet.values.length < 2) {
         container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
         window.scrollTo(0,scrollY);
         return;
@@ -135,17 +153,21 @@ function loadListingsFor(date) {
       const data = {};
 
       sheet.values.slice(1).forEach(row=>{
+
         const safe = Array.from({length:11},(_,i)=>row[i]||"");
-        if (safe[0]!==formatted) return;
+
+        if (safe[0] !== formatted) return;
 
         const cinema = safe[1];
         if (!cinema) return;
 
         const format = normaliseFormat(safe[5]);
+
         if (FILM_ONLY && !/(16mm|35mm|70mm)/i.test(format)) return;
 
         const rawTitle = safe[2].trim();
         const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
+
         const title = m ? m[2] : rawTitle;
         const link  = m ? m[1] : "";
 
@@ -162,10 +184,12 @@ function loadListingsFor(date) {
             }).filter(p=>p.title)
           : [];
 
-        if (!data[cinema]) data[cinema]=[];
+        if (!data[cinema]) data[cinema] = [];
 
         let film = data[cinema].find(f=>f.title===title);
+
         if (!film) {
+
           film = {
             title,
             link,
@@ -175,6 +199,7 @@ function loadListingsFor(date) {
             details: buildDetails(safe[3], safe[7], safe[4], format),
             times:[]
           };
+
           data[cinema].push(film);
         }
 
@@ -183,61 +208,92 @@ function loadListingsFor(date) {
           if (nt && !film.times.includes(nt)) film.times.push(nt);
         });
 
-        /* === ADDITION: SORT TIMES WITHIN FILM === */
         film.times.sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
+
       });
 
-      /* === ADDITION: SORT FILMS BY EARLIEST TIME === */
       Object.values(data).forEach(films=>{
         films.sort((a,b)=>timeToMinutes(a.times[0]) - timeToMinutes(b.times[0]));
       });
 
       if (!Object.keys(data).length) {
+
         container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
         window.scrollTo(0,scrollY);
         return;
+
       }
 
       Object.keys(data)
         .sort((a,b)=>normaliseCinemaName(a).localeCompare(normaliseCinemaName(b)))
         .forEach(cinema=>{
+
           container.innerHTML += `
             <div class="cinema">
               <h2>${cinema}</h2>
+
               <div class="screenings">
+
                 ${data[cinema].map(s=>`
+
                   <div class="screening">
+
                     ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
+
                     <a href="${s.link||"#"}">${s.title}</a>
+
                     ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
+
                     ${s.details ? `<div class="details">${s.details}</div>` : ""}
+
                     ${s.programmeFilms.length ? `
                       <ul class="programme-films">
+
                         ${s.programmeFilms.map(f=>{
-                          const pfMeta = buildProgrammeMeta(f.director, f.year, f.runtime, f.format);
+
+                          const pfMeta = buildProgrammeMeta(
+                            f.director,
+                            f.year,
+                            f.runtime,
+                            f.format
+                          );
+
                           return `
                           <li>
+
                             <div class="pf-title">${f.title}</div>
+
                             ${pfMeta ? `<div class="pf-meta">${pfMeta}</div>` : ""}
+
                           </li>
-                        `;
+                          `;
+
                         }).join("")}
-                      </ul>` : ""}
+
+                      </ul>
+                    ` : ""}
+
                     <div class="time">${s.times.join(", ")}</div>
+
                   </div>
+
                 `).join("")}
+
               </div>
             </div>
           `;
+
         });
 
       window.scrollTo(0,scrollY);
+
     });
 }
 
 /* =======================================================
-   CONTROLS (UNCHANGED)
+   CONTROLS
 ======================================================= */
+
 filmFilter && (filmFilter.onclick = ()=>{
   FILM_ONLY = !FILM_ONLY;
   filmFilter.classList.toggle("active",FILM_ONLY);
@@ -246,17 +302,23 @@ filmFilter && (filmFilter.onclick = ()=>{
 
 document.getElementById("prev-btn").onclick = ()=>{
   currentDate = atLocalMidnight(new Date(currentDate.getFullYear(),currentDate.getMonth(),currentDate.getDate()-1));
-  resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+  resetFilmFilter();
+  updateCalendar();
+  loadListingsFor(currentDate);
 };
 
 document.getElementById("next-btn").onclick = ()=>{
   currentDate = atLocalMidnight(new Date(currentDate.getFullYear(),currentDate.getMonth(),currentDate.getDate()+1));
-  resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+  resetFilmFilter();
+  updateCalendar();
+  loadListingsFor(currentDate);
 };
 
 document.getElementById("date-picker").onchange = e=>{
   currentDate = atLocalMidnight(new Date(e.target.value+"T00:00:00"));
-  resetFilmFilter(); updateCalendar(); loadListingsFor(currentDate);
+  resetFilmFilter();
+  updateCalendar();
+  loadListingsFor(currentDate);
 };
 
 document.getElementById("calendar-date").onclick = ()=>{
@@ -266,6 +328,7 @@ document.getElementById("calendar-date").onclick = ()=>{
 /* =======================================================
    INIT
 ======================================================= */
+
 currentDate = atLocalMidnight(new Date());
 updateCalendar();
 loadListingsFor(currentDate);
