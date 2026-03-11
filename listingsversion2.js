@@ -47,7 +47,7 @@ function updateCalendar() {
 }
 
 function normaliseFormat(fmt) {
-  if (!fmt || fmt.trim() === "") return "DCP";
+  if (!fmt || fmt.trim() === "") return "";
   const f = fmt.trim().toUpperCase().replace(/\s+/g,"");
   if (["DIGITAL","DIG","HD","DCP","4K","4KRESTORATION"].includes(f)) return "DCP";
   if (["35","35MM"].includes(f)) return "35mm";
@@ -77,6 +77,33 @@ function timeToMinutes(t) {
   if (!t) return Infinity;
   const [h,m] = t.split(":").map(Number);
   return h * 60 + m;
+}
+
+/* === ADDITION: CLEAN METADATA HELPERS === */
+function cleanValue(v) {
+  return String(v || "").trim();
+}
+
+function buildDetails(director, year, runtime, format) {
+  const parts = [
+    cleanValue(director),
+    cleanValue(year),
+    cleanValue(runtime) ? `${cleanValue(runtime)} min` : "",
+    cleanValue(format)
+  ].filter(Boolean);
+
+  return parts.join(", ");
+}
+
+function buildProgrammeMeta(director, year, runtime, format) {
+  const parts = [
+    cleanValue(director),
+    cleanValue(year),
+    cleanValue(runtime) ? `${cleanValue(runtime)} min` : "",
+    cleanValue(format)
+  ].filter(Boolean);
+
+  return parts.join(", ");
 }
 
 /* =======================================================
@@ -145,12 +172,7 @@ function loadListingsFor(date) {
             notes: safe[8],
             screeningNotes,
             programmeFilms,
-            details: [
-              safe[3],
-              safe[7],
-              safe[4] ? `${safe[4]} min` : "",
-              format
-            ].filter(Boolean).join(", "),
+            details: buildDetails(safe[3], safe[7], safe[4], format),
             times:[]
           };
           data[cinema].push(film);
@@ -188,18 +210,18 @@ function loadListingsFor(date) {
                     ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
                     <a href="${s.link||"#"}">${s.title}</a>
                     ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
-                    <div class="details">${s.details}</div>
+                    ${s.details ? `<div class="details">${s.details}</div>` : ""}
                     ${s.programmeFilms.length ? `
                       <ul class="programme-films">
-                        ${s.programmeFilms.map(f=>`
+                        ${s.programmeFilms.map(f=>{
+                          const pfMeta = buildProgrammeMeta(f.director, f.year, f.runtime, f.format);
+                          return `
                           <li>
                             <div class="pf-title">${f.title}</div>
-                            ${[f.director,f.year,f.runtime,f.format].some(Boolean)
-                              ? `<div class="pf-meta">${[f.director,f.year,f.runtime,f.format].filter(Boolean).join(", ")}</div>`
-                              : ""
-                            }
+                            ${pfMeta ? `<div class="pf-meta">${pfMeta}</div>` : ""}
                           </li>
-                        `).join("")}
+                        `;
+                        }).join("")}
                       </ul>` : ""}
                     <div class="time">${s.times.join(", ")}</div>
                   </div>
