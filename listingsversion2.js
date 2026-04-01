@@ -21,6 +21,13 @@ let currentDate = null;
 let FILM_ONLY = false;
 
 const filmFilter = document.getElementById("filter-film");
+const LOCKED_NOTES_TAG = typeof window.LOCKED_NOTES_TAG === "string"
+  ? window.LOCKED_NOTES_TAG
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+  : "";
 
 /* =======================================================
    HELPERS
@@ -96,7 +103,6 @@ function cleanRuntime(v) {
 }
 
 function buildDetails(director, year, runtime, format) {
-
   const rt = cleanRuntime(runtime);
 
   const parts = [
@@ -110,7 +116,6 @@ function buildDetails(director, year, runtime, format) {
 }
 
 function buildProgrammeMeta(director, year, runtime, format) {
-
   const rt = cleanRuntime(runtime);
 
   const parts = [
@@ -127,7 +132,6 @@ function buildProgrammeMeta(director, year, runtime, format) {
    LOAD LISTINGS
 ======================================================= */
 function loadListingsFor(date) {
-
   currentDate = date;
   const scrollY = window.scrollY;
 
@@ -161,6 +165,18 @@ function loadListingsFor(date) {
         const cinema = safe[1];
         if (!cinema) return;
 
+        const rawNotes = String(safe[8] || "");
+        const normalisedNotes = rawNotes
+          .replace(/\u00a0/g, " ")
+          .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (
+          LOCKED_NOTES_TAG &&
+          !normalisedNotes.toLowerCase().includes(LOCKED_NOTES_TAG)
+        ) return;
+
         const format = normaliseFormat(safe[5]);
 
         if (FILM_ONLY && !/(16mm|35mm|70mm)/i.test(format)) return;
@@ -193,7 +209,7 @@ function loadListingsFor(date) {
           film = {
             title,
             link,
-            notes: safe[8],
+            notes: rawNotes,
             screeningNotes,
             programmeFilms,
             details: buildDetails(safe[3], safe[7], safe[4], format),
