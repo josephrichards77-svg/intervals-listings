@@ -133,10 +133,12 @@ function buildProgrammeMeta(director, year, runtime, format) {
 ======================================================= */
 function loadListingsFor(date) {
   currentDate = date;
-  const scrollY = window.scrollY;
 
+  // Do NOT touch container.innerHTML here. Clearing it before the fetch
+  // resolves collapses the page height and yanks the scroll position up
+  // (the "jump to top" bug). We only swap content in once, in one go,
+  // after everything is built.
   const container = document.getElementById("cinema-listings");
-  container.innerHTML = "";
 
   const formatted = [
     date.getFullYear(),
@@ -147,6 +149,8 @@ function loadListingsFor(date) {
   fetch("https://sheets.googleapis.com/v4/spreadsheets/1drykEGaf8YsMpWOsGLn7iGJwMQeLEYzJNtybd_8aY5Q/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
     .then(r=>r.json())
     .then(sheet=>{
+
+      const scrollY = window.scrollY;
 
       if (!sheet.values || sheet.values.length < 2) {
         container.innerHTML = `<p style="text-align:center;padding:20px;">No listings for this date.</p>`;
@@ -240,11 +244,12 @@ function loadListingsFor(date) {
 
       }
 
-      Object.keys(data)
+      // Build the entire new markup in memory first — nothing touches the
+      // live DOM (and therefore nothing changes page height / scroll) until
+      // the single assignment below.
+      const html = Object.keys(data)
         .sort((a,b)=>normaliseCinemaName(a).localeCompare(normaliseCinemaName(b)))
-        .forEach(cinema=>{
-
-          container.innerHTML += `
+        .map(cinema => `
             <div class="cinema">
               <h2>${cinema}</h2>
 
@@ -297,11 +302,12 @@ function loadListingsFor(date) {
 
               </div>
             </div>
-          `;
+          `).join("");
 
-        });
-
-      window.scrollTo(0,scrollY);
+      // Single swap: old content is replaced by new content in one paint,
+      // so the page never collapses to zero height in between and the
+      // scroll position never needs to jump.
+      container.innerHTML = html;
 
     });
 }
