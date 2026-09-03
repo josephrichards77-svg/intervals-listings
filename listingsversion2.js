@@ -29,6 +29,12 @@ const LOCKED_NOTES_TAG = typeof window.LOCKED_NOTES_TAG === "string"
       .toLowerCase()
   : "";
 
+// Set window.LOCKED_CINEMA on a page to restrict listings to one venue.
+// Unset everywhere else, so the main listings page is unaffected.
+const LOCKED_CINEMA = typeof window.LOCKED_CINEMA === "string"
+  ? normaliseCinemaName(window.LOCKED_CINEMA)
+  : "";
+
 /* =======================================================
    HELPERS
 ======================================================= */
@@ -168,6 +174,8 @@ function loadListingsFor(date) {
 
         const cinema = safe[1];
         if (!cinema) return;
+
+        if (LOCKED_CINEMA && normaliseCinemaName(cinema) !== LOCKED_CINEMA) return;
 
         const rawNotes = String(safe[8] || "");
         const normalisedNotes = rawNotes
