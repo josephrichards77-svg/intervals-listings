@@ -267,8 +267,7 @@ function loadListingsFor(date) {
 
                   <div class="screening">
 
-                    ${s.notes ? `<div class="notes-tag">${s.notes}</div>` : ""}
-
+                    ${s.notes.trim() ? `<div class="notes-tag">${s.notes}</div>` : ""}
                     <a href="${s.link||"#"}">${s.title}</a>
 
                     ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
