@@ -71,6 +71,7 @@ function normaliseFormat(fmt) {
   if (["35","35MM"].includes(f)) return "35mm";
   if (["70","70MM"].includes(f)) return "70mm";
   if (["16","16MM"].includes(f)) return "16mm";
+  if (["8","8MM"].includes(f)) return "8mm"; 
   return fmt.trim();
 }
 
@@ -138,7 +139,7 @@ function buildProgrammeMeta(director, year, runtime, format) {
     cleanValue(director),
     cleanValue(year),
     rt ? `${rt} min` : "",
-    cleanValue(format)
+    normaliseFormat(format)
   ].filter(Boolean);
 
   return parts.join(", ");
@@ -201,7 +202,7 @@ function loadListingsFor(date) {
 
         const format = normaliseFormat(safe[5]);
 
-        if (FILM_ONLY && !/(16mm|35mm|70mm)/i.test(format)) return;
+        if (FILM_ONLY && !/\b(8|16|35|70)mm\b|super\s*8/i.test(format)) return;
 
         const rawTitle = safe[2].trim();
         const m = rawTitle.match(/<a[^>]+href="([^"]+)"[^>]*>(.*?)<\/a>/i);
