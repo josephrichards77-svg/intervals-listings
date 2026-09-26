@@ -55,8 +55,13 @@ function formatFullDate(date) {
 
 function updateCalendar() {
   if (!currentDate) return;
-  document.getElementById("calendar-date").textContent =
-    formatFullDate(currentDate);
+  // Two pieces, so phones can stack them as two lines that each hug
+  // their text (see "Listings date" in Additional CSS).
+  const d = currentDate.getDate();
+  const day   = `${currentDate.toLocaleDateString("en-GB",{weekday:"long"})}, ${d}${getOrdinal(d)}`;
+  const month = `${currentDate.toLocaleDateString("en-GB",{month:"long"})} ${currentDate.getFullYear()}`;
+  document.getElementById("calendar-date").innerHTML =
+    `<span class="cd-day">${day}</span> <span class="cd-month">${month}</span>`;
 }
 
 function normaliseFormat(fmt) {
