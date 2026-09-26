@@ -111,14 +111,19 @@ function cleanRuntime(v) {
 function buildDetails(director, year, runtime, format) {
   const rt = cleanRuntime(runtime);
 
-  const parts = [
+  const known = [
     cleanValue(director),
     cleanValue(year),
-    rt ? `${rt} min` : "",
-    cleanValue(format)
+    rt ? `${rt} min` : ""
   ].filter(Boolean);
 
-  return parts.join(", ");
+  // A lone "DCP" tells the reader nothing: it's usually a shorts
+  // programme with no director/year/runtime, and digital is the
+  // default anyway. Film and tape formats (35mm, 16mm, VHS) still
+  // show on their own, since those are why people go.
+  if (!known.length && cleanValue(format) === "DCP") return "";
+
+  return [...known, cleanValue(format)].filter(Boolean).join(", ");
 }
 
 function buildProgrammeMeta(director, year, runtime, format) {
