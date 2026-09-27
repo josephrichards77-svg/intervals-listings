@@ -91,6 +91,22 @@ function normaliseCinemaName(name) {
   return name.replace(/^(the|a|an)\s+/i,"").trim().toLowerCase();
 }
 
+// Key for merging rows of the same film: "La Cérémonie" and "La Ceremonie"
+// (or differing case/spacing) are one film.
+function titleKey(title) {
+  return String(title)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function hasAccents(s) {
+  return String(s).normalize("NFD") !== String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 function timeToMinutes(t) {
   if (!t) return Infinity;
   const [h,m] = t.split(":").map(Number);
@@ -225,7 +241,14 @@ function loadListingsFor(date) {
 
         if (!data[cinema]) data[cinema] = [];
 
-        let film = data[cinema].find(f=>f.title===title);
+        const key = titleKey(title);
+        let film = data[cinema].find(f=>titleKey(f.title)===key);
+
+        // Prefer the accented spelling when the same film appears both ways.
+        if (film && !hasAccents(film.title) && hasAccents(title)) {
+          film.title = title;
+          if (link) film.link = link;
+        }
 
         if (!film) {
 
