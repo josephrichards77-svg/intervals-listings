@@ -179,7 +179,7 @@ function loadListingsFor(date) {
     String(date.getDate()).padStart(2,"0")
   ].join("-");
 
-  fetch("https://sheets.googleapis.com/v4/spreadsheets/1drykEGaf8YsMpWOsGLn7iGJwMQeLEYzJNtybd_8aY5Q/values/Master?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
+  fetch("https://sheets.googleapis.com/v4/spreadsheets/1drykEGaf8YsMpWOsGLn7iGJwMQeLEYzJNtybd_8aY5Q/values/live?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
     .then(r=>r.json())
     .then(sheet=>{
 
