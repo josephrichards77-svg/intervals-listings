@@ -36,6 +36,53 @@ const LOCKED_CINEMA = typeof window.LOCKED_CINEMA === "string"
   : "";
 
 /* =======================================================
+   SEASON LINKS
+   season_pages.py publishes {tag: season page URL} for every published
+   season page into a hidden block on the /seasons/ page. Fetched once, in
+   parallel with the sheet; if it's slow or missing, tags stay plain text.
+======================================================= */
+const SEASON_LINKS = Promise.race([
+  fetch("https://intervalslondon.com/wp-json/wp/v2/pages/5983?_fields=content")
+    .then(r => r.ok ? r.json() : null)
+    .then(page => {
+      const html = page && page.content && page.content.rendered;
+      if (!html) return {};
+      const el = new DOMParser().parseFromString(html, "text/html")
+        .getElementById("iv-season-links");
+      return el ? JSON.parse(el.getAttribute("data-links") || "{}") : {};
+    }),
+  new Promise(resolve => setTimeout(() => resolve({}), 3000))
+]).catch(() => ({}));
+
+// Same normalisation season_pages.py's norm_key applies to the keys.
+function tagKey(s) {
+  const ta = document.createElement("textarea");
+  ta.innerHTML = s;
+  return ta.value
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u2000-\u200B\u202F\u205F\u3000]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Link each "|"-separated tag that has a published season page. A notes
+// cell that already carries a link (added by hand or by a scraper) is left
+// exactly as it is.
+function linkNotes(notes, cinema, links) {
+  if (/<a\s/i.test(notes)) return notes;
+  const venue = tagKey(cinema);
+  return notes.split("|").map(part => {
+    const key = tagKey(part);
+    const url = key && (links[venue + "::" + key] || links[key]);
+    if (!url) return part;
+    const lead = part.match(/^\s*/)[0];
+    const trail = part.match(/\s*$/)[0];
+    return `${lead}<a href="${url}">${part.trim()}</a>${trail}`;
+  }).join("|");
+}
+
+/* =======================================================
    HELPERS
 ======================================================= */
 function resetFilmFilter() {
@@ -179,9 +226,12 @@ function loadListingsFor(date) {
     String(date.getDate()).padStart(2,"0")
   ].join("-");
 
-  fetch("https://sheets.googleapis.com/v4/spreadsheets/1drykEGaf8YsMpWOsGLn7iGJwMQeLEYzJNtybd_8aY5Q/values/live?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
-    .then(r=>r.json())
-    .then(sheet=>{
+  Promise.all([
+    fetch("https://sheets.googleapis.com/v4/spreadsheets/1drykEGaf8YsMpWOsGLn7iGJwMQeLEYzJNtybd_8aY5Q/values/live?key=AIzaSyDwO660poWTz5En2w5Tz-Z0JmtAEXFfo0g")
+      .then(r=>r.json()),
+    SEASON_LINKS
+  ])
+    .then(([sheet, seasonLinks])=>{
 
       const scrollY = window.scrollY;
 
@@ -301,7 +351,7 @@ function loadListingsFor(date) {
 
                   <div class="screening">
 
-                    ${s.notes.trim() ? `<div class="notes-tag">${s.notes}</div>` : ""}
+                    ${s.notes.trim() ? `<div class="notes-tag">${linkNotes(s.notes, cinema, seasonLinks)}</div>` : ""}
                     <a href="${s.link||"#"}">${s.title}</a>
 
                     ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
