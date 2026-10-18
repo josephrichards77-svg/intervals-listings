@@ -154,6 +154,18 @@ function hasAccents(s) {
   return String(s).normalize("NFD") !== String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+// "*parent & baby screening" for one kind of special screening, or
+// "*11:00 members' screening, *14:00 relaxed screening" when there are several.
+function screeningNotesLine(s) {
+  const strip = n => String(n || "").replace(/^[*+\s]+/, "").trim();
+  const starredTimes = s.times.filter(t => s.starred[t] !== undefined);
+  const kinds = [...new Set(starredTimes.map(t => strip(s.starred[t])))].filter(Boolean);
+  let star = "";
+  if (kinds.length === 1) star = "*" + kinds[0];
+  else if (kinds.length > 1) star = starredTimes.map(t => `*${t} ${strip(s.starred[t])}`).join(", ");
+  return [strip(s.screeningNotes), star].filter(Boolean).join(" · ");
+}
+
 function timeToMinutes(t) {
   if (!t) return Infinity;
   const [h,m] = t.split(":").map(Number);
@@ -300,24 +312,56 @@ function loadListingsFor(date) {
           if (link) film.link = link;
         }
 
+        // A row with a screening note (members', parent & baby, relaxed, Q&A…)
+        // is a special screening. When the same film also has an ordinary
+        // screening that day, the ordinary one supplies the link and the
+        // special times are marked with * instead of taking over the entry.
+        // Also catch special screenings from the link alone, in case a row's
+        // note column is blank (Barbican: /parent-baby-screening-…, etc).
+        const SPECIAL_LINKS = [
+          [/parent-?(?:and-|&-)?baby|baby-?friendly|carers-?(?:and-)?babies/i, "parent & baby screening"],
+          [/members?-screening|member-preview/i, "members' screening"],
+          [/relaxed-screening/i, "relaxed screening"],
+        ];
+        const linkKind = (SPECIAL_LINKS.find(([re]) => re.test(link)) || [])[1] || "";
+        const specialNote = screeningNotes || linkKind;
+        const isSpecial = !!specialNote;
+        const rowTimes = (safe[6]||"").split(",")
+          .map(t => normaliseTime(t.trim().replace(/^\*+/, "")))
+          .filter(Boolean);
+
         if (!film) {
 
           film = {
             title,
             link,
             notes: rawNotes,
-            screeningNotes,
+            screeningNotes: specialNote,
             programmeFilms,
             details: buildDetails(safe[3], safe[7], safe[4], format),
-            times:[]
+            times:[],
+            special: isSpecial,
+            starred: {}
           };
 
           data[cinema].push(film);
+
+        } else if (film.special && !isSpecial) {
+
+          film.times.forEach(t => { film.starred[t] = film.screeningNotes; });
+          if (link) film.link = link;
+          if (!film.notes.trim() && rawNotes.trim()) film.notes = rawNotes;
+          film.screeningNotes = "";
+          film.special = false;
+
+        } else if (!film.special && isSpecial) {
+
+          rowTimes.forEach(t => { film.starred[t] = specialNote; });
+
         }
 
-        (safe[6]||"").split(",").forEach(t=>{
-          const nt = normaliseTime(t.trim());
-          if (nt && !film.times.includes(nt)) film.times.push(nt);
+        rowTimes.forEach(nt => {
+          if (!film.times.includes(nt)) film.times.push(nt);
         });
 
         film.times.sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
@@ -354,7 +398,7 @@ function loadListingsFor(date) {
                     ${s.notes.trim() ? `<div class="notes-tag">${linkNotes(s.notes, cinema, seasonLinks)}</div>` : ""}
                     <a href="${s.link||"#"}">${s.title}</a>
 
-                    ${s.screeningNotes ? `<div class="screening-notes">${s.screeningNotes}</div>` : ""}
+                    ${screeningNotesLine(s) ? `<div class="screening-notes">${screeningNotesLine(s)}</div>` : ""}
 
                     ${s.details ? `<div class="details">${s.details}</div>` : ""}
 
@@ -385,7 +429,7 @@ function loadListingsFor(date) {
                       </ul>
                     ` : ""}
 
-                    <div class="time">${s.times.join(", ")}</div>
+                    <div class="time">${s.times.map(t => s.starred[t] ? "*" + t : t).join(", ")}</div>
 
                   </div>
 
