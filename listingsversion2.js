@@ -316,7 +316,16 @@ function loadListingsFor(date) {
         // is a special screening. When the same film also has an ordinary
         // screening that day, the ordinary one supplies the link and the
         // special times are marked with * instead of taking over the entry.
-        const isSpecial = !!screeningNotes;
+        // Also catch special screenings from the link alone, in case a row's
+        // note column is blank (Barbican: /parent-baby-screening-…, etc).
+        const SPECIAL_LINKS = [
+          [/parent-?(?:and-|&-)?baby|baby-?friendly|carers-?(?:and-)?babies/i, "parent & baby screening"],
+          [/members?-screening|member-preview/i, "members' screening"],
+          [/relaxed-screening/i, "relaxed screening"],
+        ];
+        const linkKind = (SPECIAL_LINKS.find(([re]) => re.test(link)) || [])[1] || "";
+        const specialNote = screeningNotes || linkKind;
+        const isSpecial = !!specialNote;
         const rowTimes = (safe[6]||"").split(",")
           .map(t => normaliseTime(t.trim().replace(/^\*+/, "")))
           .filter(Boolean);
@@ -327,7 +336,7 @@ function loadListingsFor(date) {
             title,
             link,
             notes: rawNotes,
-            screeningNotes,
+            screeningNotes: specialNote,
             programmeFilms,
             details: buildDetails(safe[3], safe[7], safe[4], format),
             times:[],
@@ -347,7 +356,7 @@ function loadListingsFor(date) {
 
         } else if (!film.special && isSpecial) {
 
-          rowTimes.forEach(t => { film.starred[t] = screeningNotes; });
+          rowTimes.forEach(t => { film.starred[t] = specialNote; });
 
         }
 
