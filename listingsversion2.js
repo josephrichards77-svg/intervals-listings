@@ -155,14 +155,15 @@ function hasAccents(s) {
 }
 
 // "*parent & baby screening" for one kind of special screening, or
-// "*11:00 members' screening, *14:00 relaxed screening" when there are several.
+// "11:00* members' screening, 14:00* relaxed screening" when there are several.
+// Shown under the times, which carry the matching trailing * ("12:00*").
 function screeningNotesLine(s) {
   const strip = n => String(n || "").replace(/^[*+\s]+/, "").trim();
   const starredTimes = s.times.filter(t => s.starred[t] !== undefined);
   const kinds = [...new Set(starredTimes.map(t => strip(s.starred[t])))].filter(Boolean);
   let star = "";
   if (kinds.length === 1) star = "*" + kinds[0];
-  else if (kinds.length > 1) star = starredTimes.map(t => `*${t} ${strip(s.starred[t])}`).join(", ");
+  else if (kinds.length > 1) star = starredTimes.map(t => `${t}* ${strip(s.starred[t])}`).join(", ");
   return [strip(s.screeningNotes), star].filter(Boolean).join(" · ");
 }
 
@@ -327,7 +328,10 @@ function loadListingsFor(date) {
         const specialNote = screeningNotes || linkKind;
         const isSpecial = !!specialNote;
         const rowTimes = (safe[6]||"").split(",")
-          .map(t => normaliseTime(t.trim().replace(/^\*+/, "")))
+          // The CMS marks a special screening's time with a trailing asterisk
+          // ("12:00*"), older rows with a leading one ("*12:00"). Strip both:
+          // the * shown on the page is added back from film.starred below.
+          .map(t => normaliseTime(t.trim().replace(/^\*+|\*+$/g, "")))
           .filter(Boolean);
 
         if (!film) {
@@ -398,8 +402,6 @@ function loadListingsFor(date) {
                     ${s.notes.trim() ? `<div class="notes-tag">${linkNotes(s.notes, cinema, seasonLinks)}</div>` : ""}
                     <a href="${s.link||"#"}">${s.title}</a>
 
-                    ${screeningNotesLine(s) ? `<div class="screening-notes">${screeningNotesLine(s)}</div>` : ""}
-
                     ${s.details ? `<div class="details">${s.details}</div>` : ""}
 
                     ${s.programmeFilms.length ? `
@@ -429,7 +431,9 @@ function loadListingsFor(date) {
                       </ul>
                     ` : ""}
 
-                    <div class="time">${s.times.map(t => s.starred[t] ? "*" + t : t).join(", ")}</div>
+                    <div class="time">${s.times.map(t => s.starred[t] ? t + "*" : t).join(", ")}</div>
+
+                    ${screeningNotesLine(s) ? `<div class="screening-notes">${screeningNotesLine(s)}</div>` : ""}
 
                   </div>
 
